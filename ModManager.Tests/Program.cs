@@ -1,17 +1,20 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Microsoft.Win32.SafeHandles;
 using StudentAgeModManager;
 using StudentAgeModManager.Core;
 
@@ -96,6 +99,7 @@ namespace StudentAgeModManager.Tests
         {
             // Run blocking async tests before WinForms installs its synchronization context.
             RunWorkshopReferenceTests();
+            RunWorkshopPageLauncherTests();
             RunIndexValidationTests();
             RunWorkshopMetadataTests(Path.Combine(tempRoot, "workshop-metadata"));
             RunMainFormUiTests(Path.Combine(tempRoot, "main-form-ui"));
@@ -207,9 +211,51 @@ namespace StudentAgeModManager.Tests
             Assert(WorkshopItem.PageUrl("1234") ==
                    "https://steamcommunity.com/sharedfiles/filedetails/?id=1234",
                 "trusted Workshop URLs must be constructed from only the canonical numeric ID");
+            Assert(WorkshopItem.SteamClientUrl("1234") ==
+                   "steam://url/CommunityFilePage/1234",
+                "trusted Steam client URLs must be constructed from only the canonical numeric ID");
             AssertPageUrlRejected("001234");
             AssertPageUrlRejected("0");
             AssertPageUrlRejected("https://steamcommunity.com/sharedfiles/filedetails/?id=1234");
+        }
+
+        private static void RunWorkshopPageLauncherTests()
+        {
+            var opened = new List<string>();
+            var steamLauncher = new WorkshopPageLauncher(() => true, opened.Add);
+            WorkshopPageTarget target = steamLauncher.Open("1234");
+            Assert(target == WorkshopPageTarget.SteamClient && opened.Count == 1 &&
+                   opened[0] == "steam://url/CommunityFilePage/1234",
+                "a running Steam client should receive the canonical Steam Workshop URI");
+
+            opened.Clear();
+            var browserLauncher = new WorkshopPageLauncher(() => false, opened.Add);
+            target = browserLauncher.Open("1234");
+            Assert(target == WorkshopPageTarget.WebBrowser && opened.Count == 1 &&
+                   opened[0] == "https://steamcommunity.com/sharedfiles/filedetails/?id=1234",
+                "an inactive Steam client should fall back to the canonical HTTPS page");
+
+            opened.Clear();
+            var fallbackLauncher = new WorkshopPageLauncher(() => true, url =>
+            {
+                opened.Add(url);
+                if (url.StartsWith("steam:", StringComparison.Ordinal))
+                    throw new InvalidOperationException("broken Steam protocol association");
+            });
+            target = fallbackLauncher.Open("1234");
+            Assert(target == WorkshopPageTarget.WebBrowser && opened.SequenceEqual(new[]
+                {
+                    "steam://url/CommunityFilePage/1234",
+                    "https://steamcommunity.com/sharedfiles/filedetails/?id=1234",
+                }), "a failed Steam protocol launch should retry in the browser");
+
+            opened.Clear();
+            var detectionFallback = new WorkshopPageLauncher(
+                () => throw new InvalidOperationException("process query failed"), opened.Add);
+            target = detectionFallback.Open("1234");
+            Assert(target == WorkshopPageTarget.WebBrowser && opened.Count == 1 &&
+                   opened[0].StartsWith("https://", StringComparison.Ordinal),
+                "a Steam process detection failure should safely use the browser");
         }
 
         private static void RunIndexValidationTests()
@@ -324,6 +370,9 @@ namespace StudentAgeModManager.Tests
             Assert(WorkshopItem.PageUrl(actualId) ==
                    "https://steamcommunity.com/sharedfiles/filedetails/?id=" + expectedId,
                 "the index-provided reference must never be opened directly: " + reference);
+            Assert(WorkshopItem.SteamClientUrl(actualId) ==
+                   "steam://url/CommunityFilePage/" + expectedId,
+                "the Steam URI must be rebuilt from the normalized numeric ID: " + reference);
         }
 
         private static void AssertInvalidWorkshopReference(string reference)
@@ -336,16 +385,21 @@ namespace StudentAgeModManager.Tests
 
         private static void AssertPageUrlRejected(string value)
         {
-            bool rejected = false;
-            try
+            foreach (Func<string, string> buildUrl in new Func<string, string>[]
+                { WorkshopItem.PageUrl, WorkshopItem.SteamClientUrl })
             {
-                WorkshopItem.PageUrl(value);
+                bool rejected = false;
+                try
+                {
+                    buildUrl(value);
+                }
+                catch (ArgumentException)
+                {
+                    rejected = true;
+                }
+                Assert(rejected, "Workshop page URL builders must reject non-canonical input: " +
+                    value);
             }
-            catch (ArgumentException)
-            {
-                rejected = true;
-            }
-            Assert(rejected, "PageUrl must reject non-canonical input: " + value);
         }
 
         private static void AssertInvalidIndex(string json, params string[] expectedFragments)
@@ -1657,6 +1711,8 @@ namespace StudentAgeModManager.Tests
                    rootPlugin.DisplayName == "Root Mod" && rootPlugin.DisplayVersion == "2.0.0",
                 "a root-level plugin DLL should be represented as an independent local unit");
 
+            AssertScannerWorksWithInternetZoneMarker(scanner, gameRoot, "RootMod.dll");
+
             var manager = new LocalPluginManager(new LocalState(gameRoot));
             manager.Disable(directory);
             Assert(!Directory.Exists(directoryUnit) &&
@@ -1798,6 +1854,89 @@ namespace StudentAgeModManager.Tests
             Assert(!scanner.Scan(gameRoot).Any(unit => unit.UnitKey == "SuspiciousLink"),
                 "non-Workshop reparse points must not be followed or displayed");
         }
+
+        private static void AssertScannerWorksWithInternetZoneMarker(
+            LocalPluginScanner scanner, string gameRoot, string expectedUnitKey)
+        {
+            if (Environment.OSVersion.Platform != PlatformID.Win32NT) return;
+
+            string hostPath = typeof(LocalPluginScanner).Assembly.Location;
+            string zoneStreamPath = hostPath + ":Zone.Identifier";
+            byte[] previousZone = null;
+            bool hadPreviousZone = false;
+            try
+            {
+                previousZone = ReadAlternateDataStream(zoneStreamPath, out hadPreviousZone);
+
+                WriteAlternateDataStream(zoneStreamPath,
+                    Encoding.ASCII.GetBytes("[ZoneTransfer]\r\nZoneId=3\r\n"));
+                Assert(scanner.Scan(gameRoot).Any(unit => unit.UnitKey == expectedUnitKey),
+                    "plugin scanning must work when the browser-downloaded manager carries MOTW");
+            }
+            finally
+            {
+                if (hadPreviousZone)
+                    WriteAlternateDataStream(zoneStreamPath, previousZone);
+                else
+                    DeleteFile(zoneStreamPath);
+            }
+        }
+
+        private static byte[] ReadAlternateDataStream(string path, out bool exists)
+        {
+            using (SafeFileHandle handle = CreateFile(path, GenericRead, FileShareAll,
+                IntPtr.Zero, OpenExisting, FileAttributeNormal, IntPtr.Zero))
+            {
+                if (handle.IsInvalid)
+                {
+                    int error = Marshal.GetLastWin32Error();
+                    if (error == ErrorFileNotFound || error == ErrorPathNotFound)
+                    {
+                        exists = false;
+                        return null;
+                    }
+                    throw new Win32Exception(error, "无法读取备用数据流: " + path);
+                }
+
+                exists = true;
+                using (var stream = new FileStream(handle, FileAccess.Read))
+                using (var memory = new MemoryStream())
+                {
+                    stream.CopyTo(memory);
+                    return memory.ToArray();
+                }
+            }
+        }
+
+        private static void WriteAlternateDataStream(string path, byte[] bytes)
+        {
+            using (SafeFileHandle handle = CreateFile(path, GenericWrite, FileShareAll,
+                IntPtr.Zero, CreateAlways, FileAttributeNormal, IntPtr.Zero))
+            {
+                if (handle.IsInvalid)
+                    throw new Win32Exception(Marshal.GetLastWin32Error(),
+                        "无法写入备用数据流: " + path);
+                using (var stream = new FileStream(handle, FileAccess.Write))
+                    stream.Write(bytes, 0, bytes.Length);
+            }
+        }
+
+        private const uint GenericRead = 0x80000000;
+        private const uint GenericWrite = 0x40000000;
+        private const uint FileShareAll = 0x00000007;
+        private const uint CreateAlways = 2;
+        private const uint OpenExisting = 3;
+        private const uint FileAttributeNormal = 0x00000080;
+        private const int ErrorFileNotFound = 2;
+        private const int ErrorPathNotFound = 3;
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFile(string fileName, uint desiredAccess,
+            uint shareMode, IntPtr securityAttributes, uint creationDisposition,
+            uint flagsAndAttributes, IntPtr templateFile);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool DeleteFile(string fileName);
 
         private static void WritePluginAssembly(string path, string guid, string name,
             string version)

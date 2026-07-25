@@ -33,19 +33,22 @@ namespace StudentAgeModManager.Core
             AppDomain metadataDomain = null;
             try
             {
-                metadataDomain = CreateMetadataDomain();
-                var probe = (PluginMetadataProbe)metadataDomain.CreateInstanceFromAndUnwrap(
-                    typeof(PluginMetadataProbe).Assembly.Location,
-                    typeof(PluginMetadataProbe).FullName);
+                PluginMetadataProbe probe;
+                try
+                {
+                    metadataDomain = CreateMetadataDomain();
+                    probe = CreateMetadataProbe(metadataDomain);
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException(
+                        "无法初始化隔离的插件元数据扫描器。", ex);
+                }
                 var budget = new ScanBudget();
 
                 ScanEnabledLocalUnits(gameRoot, pluginRoot, probe, budget, result);
                 ScanWorkshopUnits(gameRoot, pluginRoot, probe, budget, result);
                 ScanDisabledLocalUnits(gameRoot, disabledRoot, probe, budget, result);
-            }
-            catch
-            {
-                // 扫描属于辅助功能。元数据域创建失败时不影响管理器的前置安装和工坊入口。
             }
             finally
             {
@@ -77,6 +80,24 @@ namespace StudentAgeModManager.Core
             };
             return AppDomain.CreateDomain("StudentAge.PluginMetadata." + Guid.NewGuid().ToString("N"),
                 null, setup);
+        }
+
+        private static PluginMetadataProbe CreateMetadataProbe(AppDomain metadataDomain)
+        {
+            if (metadataDomain == null) throw new ArgumentNullException(nameof(metadataDomain));
+
+            Assembly hostAssembly = typeof(PluginMetadataProbe).Assembly;
+            string hostPath = hostAssembly.Location;
+            if (string.IsNullOrEmpty(hostPath))
+                throw new InvalidOperationException("无法确定管理器程序集路径。");
+
+            // Browser downloads normally carry a Zone.Identifier (MOTW). The main EXE may run,
+            // while CreateInstanceFromAndUnwrap(path, ...) is still rejected with 0x80131515.
+            // Loading the already-running manager assembly from its bytes keeps the disposable
+            // AppDomain boundary without removing the marker or enabling remote loads process-wide.
+            metadataDomain.Load(File.ReadAllBytes(hostPath));
+            return (PluginMetadataProbe)metadataDomain.CreateInstanceAndUnwrap(
+                hostAssembly.FullName, typeof(PluginMetadataProbe).FullName);
         }
 
         private static void ScanEnabledLocalUnits(string gameRoot, string pluginRoot,

@@ -299,13 +299,24 @@ namespace StudentAgeModManager.Core
 
         public static string PageUrl(string normalizedId)
         {
+            return "https://steamcommunity.com/sharedfiles/filedetails/?id=" +
+                   RequireCanonicalId(normalizedId);
+        }
+
+        public static string SteamClientUrl(string normalizedId)
+        {
+            return "steam://url/CommunityFilePage/" + RequireCanonicalId(normalizedId);
+        }
+
+        private static string RequireCanonicalId(string normalizedId)
+        {
             string canonicalId;
             string error;
             if (!TryNormalizeNumericId(normalizedId, out canonicalId, out error) ||
                 !string.Equals(normalizedId, canonicalId, StringComparison.Ordinal))
                 throw new ArgumentException("Workshop ID 必须是规范的非零纯数字。",
                     nameof(normalizedId));
-            return "https://steamcommunity.com/sharedfiles/filedetails/?id=" + normalizedId;
+            return canonicalId;
         }
     }
 

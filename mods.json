@@ -1,6 +1,6 @@
 {
 	"schemaVersion": 1,
-	"updatedAt": "2026-07-15",
+	"updatedAt": "2026-07-25",
 	"mirrors": [
 		"https://ghproxy.net/",
 		"https://gh-proxy.com/",
@@ -20,6 +20,18 @@
 			"name": "更好的音频效果",
 			"description": "为《学生时代》提供独立于原版音频系统的播放与演出能力",
 			"workshopId": "3763938041"
+		},
+		{
+			"id": "white12666-studentage-editor-plus",
+			"name": "StudentAgeEditorPlus（作者端编辑器增强）",
+			"description": "面向 Mod 作者的原生编辑器增强工具，提供剧情图、保存校验及可社交角色资料编辑",
+			"workshopId": "3771362794"
+		},
+		{
+			"id": "white12666-studentage-social-role-runtime",
+			"name": "StudentAgeSocialRoleRuntime（可社交角色前置）",
+			"description": "为扩展社交资料提供资料阶段显示、数组防护和旧档空生日修复",
+			"workshopId": "3771362749"
 		}
 	]
 }

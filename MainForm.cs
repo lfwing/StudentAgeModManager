@@ -44,6 +44,8 @@ namespace StudentAgeModManager
         private LocalPluginScanner _pluginScanner;
         private LocalPluginManager _localPluginManager;
         private readonly Downloader _downloader = new Downloader();
+        private readonly WorkshopPageLauncher _workshopPageLauncher =
+            new WorkshopPageLauncher();
         private IndexClient _indexClient;
         private ModIndex _index;
         private List<LocalPluginUnit> _localUnits = new List<LocalPluginUnit>();
@@ -415,8 +417,11 @@ namespace StudentAgeModManager
             if (_busy) return;
             try
             {
-                Process.Start(WorkshopItem.PageUrl(workshopId));
-                SetStatus("已打开工坊页面；订阅或取消订阅请在 Steam 中操作。" +
+                WorkshopPageTarget target = _workshopPageLauncher.Open(workshopId);
+                SetStatus((target == WorkshopPageTarget.SteamClient
+                        ? "已在 Steam 客户端打开工坊页面；"
+                        : "已在浏览器打开工坊页面；") +
+                    "订阅或取消订阅请在 Steam 中操作。" +
                     "合法 DLL 项目会在下载完成后的下一次游戏启动接入。");
             }
             catch (Exception ex)
