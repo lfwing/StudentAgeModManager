@@ -15,23 +15,40 @@
 主要文件：
 
 ```text
-Core/ModInstaller.cs           安装 BepInEx 和内嵌 Bridge
+Core/ModInstaller.cs           从内嵌包离线安装 BepInEx 和 Bridge
 Core/LocalPluginScanner.cs     扫描本地与工坊插件
 Core/LocalPluginManager.cs     启用/禁用本地插件
 Core/WorkshopMetadata.cs       Steam 显示资料与在线验证
-WorkshopBridge/                Preloader Patcher
+WorkshopBridge/WorkshopBridgeSynchronizer.cs  Preloader 与管理器共享同步核心
+WorkshopBridge/WorkshopBridgeManagement.cs    本地订阅发现与工坊启停 API
 WorkshopBridge.Tests/          Bridge 测试
 ModManager.Tests/              管理器与 UI 集成测试
 build_release.ps1              生成发布资产
 ```
 
-Bridge 构建后以资源嵌入 `ModManager.exe`，安装位置为：
+BepInEx 5.4.23 基础 ZIP 和 Bridge 均以资源嵌入 `ModManager.exe`。基础 ZIP 固定 SHA-256
+`D1C85CDC44F999883BF36587AD1C1DD03B149C7A9FB2700D651FFD6ED433B971`，安装时先校验并
+解压，再覆盖写入当前 Bridge。Bridge 安装位置为：
 
 ```text
 <GameRoot>/BepInEx/patchers/StudentAge.WorkshopBridge.dll
 ```
 
 `ModInstaller` 使用 SHA-256 比较内嵌版本与已安装版本。Bridge 应保持确定性构建；不要把 Git 提交哈希写入其程序集版本。
+
+`Downloader` 只允许读取中央文本索引，固定先直连再自动尝试文本镜像；它不再提供二进制
+下载 API。`mods.json` 中的 `bepinex.downloadUrl` 暂时保留，只为仍在运行 1.1.0 的旧客户端
+提供首次安装兼容，新版不得重新依赖该字段。
+
+`WorkshopBridgeSynchronizer.cs` 与 `WorkshopBridgeManagement.cs` 同时编入 Bridge 和 Mod
+Manager。游戏启动时由 Preloader 调用同步核心；游戏关闭时，管理器的“同步刷新”和工坊
+开关也调用同一实现，然后重新发现、扫描并渲染。不要在管理器中复制一套简化规则；游戏
+运行期间必须跳过手动同步和工坊状态写入。
+
+联接同步必须幂等。同步器先计算合法的 `Workshop ID -> 插件根目录` 期望映射，再通过目录
+句柄的卷序列号与文件 ID 比较现有联接解析后的真实目标：目标一致则保留；只有禁用、失效、
+缺失或目标改变时才删除/创建。`LinkedCount` 与 `RemovedLinkCount` 只统计真实文件系统变化，
+禁止为了简化更新处理而在每次启动或刷新时全量重建联接。
 
 ## 本地插件扫描与启停
 
@@ -42,6 +59,7 @@ BepInEx/plugins/*.dll
 BepInEx/plugins/<直接子目录>/**/*.dll
 BepInEx/ModManager/disabled/
 BepInEx/plugins/.workshop/<WorkshopId>
+<WorkshopRoot>/<WorkshopId>/BepInEx/plugins
 ```
 
 规则：
@@ -53,8 +71,31 @@ BepInEx/plugins/.workshop/<WorkshopId>
 - 禁用时移到 `BepInEx/ModManager/disabled`，启用时原样移回。
 - 不覆盖同名目标、不移动工坊联接、不删除文件，游戏运行时拒绝移动。
 - 启用区和禁用区存在同名项时标记路径冲突。
+- 只对当前加载候选检查 `BepInPlugin` GUID；两个本地单元或本地/工坊单元 GUID 重复时，
+  两边都标记冲突。禁用其中一个后冲突消失。
 
-`MainForm.RenderList()` 按 Workshop ID 合并索引条目和已接入联接，避免重复卡片。未匹配的联接显示为“Steam 工坊 · 未收录 · 已接入”，普通插件显示为本地未收录。
+`MainForm.RenderList()` 按 Workshop ID 合并索引条目和本地订阅状态，避免重复卡片。未匹配
+索引但带合法 manifest 的订阅即使已禁用、没有联接也继续显示；未收录的普通 JSON 项目不由
+DLL 管理界面显示。所有 `SteamWorkshop` 来源始终位于前面的独立工坊栏目，即使中央索引
+获取失败；只有普通手动插件才进入“本地已安装插件”。
+
+## 管理器中的工坊启停
+
+`WorkshopBridgeManagement.Discover()` 从当前 Steam 用户的
+`appworkshop_1991040.acf` 读取全部本地订阅和下载状态，再检查 manifest、DLL 包、`_mod`
+与 Bridge 联接。它不调用公开工坊 API，因此已订阅的私密项目也可管理。
+
+`SetEnabled()` 只修改两个当前用户文件并调用共享同步核心：
+
+1. 先把 Workshop ID 固化到 `seenWorkshopIds`，清除对应待处理状态；
+2. 原子加入或移除 `_mod` 中的 ID；禁用时会移除全部重复行并保留无关内容；
+3. 调用 `Synchronize()` 立即重建或撤销 Bridge 联接；
+4. MainForm 重新发现、扫描并渲染状态。
+
+它不会取消 Steam 订阅，也不会移动或删除 `<WorkshopRoot>` 中的任何源文件。因此禁用期间
+Steam 仍可下载作者更新，`seenWorkshopIds` 又会阻止更新或重新订阅使项目意外反弹；用户
+重新启用时直接使用当前已下载的最新版。下载/更新未完成、包无效、用户身份或关键路径不
+明确时拒绝启用。游戏运行中 MainForm 会在调用管理 API 前拒绝操作。
 
 ## Workshop Bridge
 
@@ -110,6 +151,7 @@ Steam 数据：
 
 ```text
 <GameRoot>/BepInEx/WorkshopBridge.log
+<GameRoot>/BepInEx/ModManager/WorkshopRefresh.log
 ```
 
 ## 工坊 DLL 包格式
@@ -163,6 +205,10 @@ Bridge 只接受该版本和固定插件目录，并要求其中至少有一个 
 
 PR 工作流会构建项目、运行测试，并通过 Steam 官方 API 验证 Workshop ID。投稿格式见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
+正式运行固定读取 `main/mods.json`。同目录 `index_url.txt` 仅供开发调试，而且必须显式设置
+`STUDENTAGE_MODMANAGER_ENABLE_INDEX_OVERRIDE=1` 才会生效；残留文件不能改变 Release
+用户的索引来源。
+
 ## 安全边界
 
 - 不执行扫描到的插件代码。
@@ -210,8 +256,10 @@ release_assets/BepInEx-5.4.23-workshop-bridge.zip
 
 1. Release 构建和两组测试通过；
 2. 索引离线验证和 Steam 在线验证通过；
-3. EXE 内嵌 Bridge，ZIP 只新增 `BepInEx/patchers/StudentAge.WorkshopBridge.dll`；
-4. 发布包不包含额外 `Mono.Cecil.dll`；
-5. `git diff --check` 通过，版本号、目标分支和资产哈希正确。
+3. EXE 内嵌哈希固定的 BepInEx 基础 ZIP 与当前 Bridge，离线完整安装测试通过；
+4. 独立 ZIP 只在基础包中新增 `BepInEx/patchers/StudentAge.WorkshopBridge.dll`；
+5. 发布包不包含额外 `Mono.Cecil.dll`；
+6. `git diff --check` 通过，版本号、目标分支和资产哈希正确。
 
-不要提交 `bin/`、`obj/` 或 `release_assets/`。
+不要提交 `bin/`、`obj/` 或生成后的发布资产；唯一例外是构建所需、哈希固定的
+`release_assets/BepInEx-5.4.23-package.zip`。

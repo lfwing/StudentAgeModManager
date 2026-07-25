@@ -12,17 +12,20 @@ namespace StudentAgeModManager.Core
     /// <summary>安装 BepInEx 前置与创意工坊 DLL Bridge。</summary>
     public class ModInstaller
     {
+        public const string BepInExVersion = "5.4.23";
         public const string WorkshopBridgeFileName = "StudentAge.WorkshopBridge.dll";
+        public const string EmbeddedBepInExPackageSha256 =
+            "D1C85CDC44F999883BF36587AD1C1DD03B149C7A9FB2700D651FFD6ED433B971";
+        private const string BepInExPackageResourceName =
+            "StudentAgeModManager.Resources.BepInEx-5.4.23-package.zip";
         private const string WorkshopBridgeResourceName =
             "StudentAgeModManager.Resources.StudentAge.WorkshopBridge.dll";
 
         private readonly LocalState _state;
-        private readonly Downloader _downloader;
 
-        public ModInstaller(LocalState state, Downloader downloader)
+        public ModInstaller(LocalState state)
         {
-            _state = state;
-            _downloader = downloader;
+            _state = state ?? throw new ArgumentNullException(nameof(state));
         }
 
         public static bool IsGameRunning()
@@ -51,42 +54,71 @@ namespace StudentAgeModManager.Core
             catch { return false; }
         }
 
-        /// <summary>安装 BepInEx 前置：下载 zip，解压到游戏根目录。</summary>
-        public async Task InstallBepInExAsync(BepInExInfo info, Action<int, string> progress,
+        /// <summary>从管理器内嵌的固定 BepInEx 包离线安装完整前置。</summary>
+        public Task InstallBepInExAsync(Action<int, string> progress,
             CancellationToken ct = default(CancellationToken))
         {
             EnsureGameNotRunning();
-            var temp = await _downloader.DownloadFileAsync(info.downloadUrl, progress, ct);
-            try
-            {
-                using (var zip = ZipFile.OpenRead(temp))
-                {
-                    // 兼容「包里套了一层目录」的情况：找到 winhttp.dll 所在层作为根
-                    string prefix = DetectZipRoot(zip);
-                    foreach (var e in zip.Entries)
-                    {
-                        if (string.IsNullOrEmpty(e.Name)) continue;
-                        var full = e.FullName.Replace('/', '\\');
-                        if (prefix.Length > 0)
-                        {
-                            if (!full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
-                            full = full.Substring(prefix.Length);
-                        }
-                        if (full.Length == 0 || full.Contains("..")) continue;
-                        var dest = Path.Combine(_state.GameDir, full);
-                        Directory.CreateDirectory(Path.GetDirectoryName(dest));
-                        e.ExtractToFile(dest, true);
-                    }
-                }
+            return Task.Run(() => InstallBepInExCore(progress, ct), ct);
+        }
 
-                // Always deploy the bridge embedded in this manager, even if the
-                // downloaded BepInEx archive contains an older copy.
-                InstallWorkshopBridgeCore();
-            }
-            finally
+        private void InstallBepInExCore(Action<int, string> progress, CancellationToken ct)
+        {
+            // Recheck on the worker immediately before touching files in case the game was
+            // launched after the UI scheduled installation.
+            EnsureGameNotRunning();
+            ct.ThrowIfCancellationRequested();
+            const string sourceLabel = "内置 BepInEx 5.4.23";
+            progress?.Invoke(0, sourceLabel);
+
+            using (var hashStream = OpenEmbeddedBepInExPackage())
             {
-                try { File.Delete(temp); } catch { }
+                string actualHash = GetStreamHashHex(hashStream);
+                if (!string.Equals(actualHash, EmbeddedBepInExPackageSha256,
+                    StringComparison.Ordinal))
+                    throw new InvalidDataException("内嵌 BepInEx 安装包校验失败。期望 " +
+                        EmbeddedBepInExPackageSha256 + "，实际 " + actualHash + "。");
             }
+
+            using (var package = OpenEmbeddedBepInExPackage())
+            using (var zip = new ZipArchive(package, ZipArchiveMode.Read, false))
+            {
+                string prefix = DetectZipRoot(zip);
+                int totalFiles = 0;
+                foreach (var entry in zip.Entries)
+                    if (!string.IsNullOrEmpty(entry.Name)) totalFiles++;
+
+                int extractedFiles = 0;
+                foreach (var entry in zip.Entries)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (string.IsNullOrEmpty(entry.Name)) continue;
+
+                    string relativePath = entry.FullName.Replace('/', '\\');
+                    if (prefix.Length > 0)
+                    {
+                        if (!relativePath.StartsWith(prefix,
+                            StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        relativePath = relativePath.Substring(prefix.Length);
+                    }
+                    string destination = ResolvePackageDestination(relativePath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(destination));
+                    using (var source = entry.Open())
+                    using (var output = new FileStream(destination, FileMode.Create,
+                        FileAccess.Write, FileShare.None))
+                        source.CopyTo(output);
+
+                    extractedFiles++;
+                    progress?.Invoke(totalFiles == 0 ? 90 :
+                        Math.Min(90, extractedFiles * 90 / totalFiles), sourceLabel);
+                }
+            }
+
+            // The immutable base package intentionally excludes the Bridge. Always deploy
+            // the exact Bridge embedded in this manager after the BepInEx files.
+            InstallWorkshopBridgeCore();
+            progress?.Invoke(100, sourceLabel);
         }
 
         /// <summary>
@@ -132,6 +164,15 @@ namespace StudentAgeModManager.Core
             return stream;
         }
 
+        private static Stream OpenEmbeddedBepInExPackage()
+        {
+            var stream = Assembly.GetExecutingAssembly()
+                .GetManifestResourceStream(BepInExPackageResourceName);
+            if (stream == null)
+                throw new InvalidDataException("管理器内未找到 BepInEx 安装包资源。");
+            return stream;
+        }
+
         private static string GetEmbeddedBridgeHash()
         {
             using (var stream = OpenEmbeddedBridge())
@@ -146,6 +187,33 @@ namespace StudentAgeModManager.Core
                 return Convert.ToBase64String(sha256.ComputeHash(stream));
         }
 
+        private static string GetStreamHashHex(Stream stream)
+        {
+            using (var sha256 = SHA256.Create())
+                return BitConverter.ToString(sha256.ComputeHash(stream)).Replace("-", "");
+        }
+
+        private string ResolvePackageDestination(string relativePath)
+        {
+            if (string.IsNullOrWhiteSpace(relativePath) || Path.IsPathRooted(relativePath))
+                throw new InvalidDataException("内嵌 BepInEx 安装包包含无效路径: " +
+                    relativePath);
+            foreach (string segment in relativePath.Split('\\'))
+                if (segment.Length == 0 || segment == "." || segment == ".." ||
+                    segment.IndexOf(':') >= 0)
+                    throw new InvalidDataException("内嵌 BepInEx 安装包包含无效路径: " +
+                        relativePath);
+
+            string gameRoot = Path.GetFullPath(_state.GameDir);
+            string rootPrefix = gameRoot.EndsWith(Path.DirectorySeparatorChar.ToString(),
+                StringComparison.Ordinal) ? gameRoot : gameRoot + Path.DirectorySeparatorChar;
+            string destination = Path.GetFullPath(Path.Combine(gameRoot, relativePath));
+            if (!destination.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("内嵌 BepInEx 安装包路径越界: " +
+                    relativePath);
+            return destination;
+        }
+
         /// <summary>找 winhttp.dll 在 zip 中的目录前缀（"" 表示就在根）。</summary>
         private static string DetectZipRoot(ZipArchive zip)
         {
@@ -157,7 +225,7 @@ namespace StudentAgeModManager.Core
                     return full.Substring(0, full.Length - e.Name.Length);
                 }
             }
-            return "";
+            throw new InvalidDataException("内嵌 BepInEx 安装包缺少 winhttp.dll。");
         }
 
         private static void EnsureGameNotRunning()

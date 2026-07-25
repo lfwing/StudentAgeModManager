@@ -350,8 +350,17 @@ namespace StudentAgeModManager.Core
         public bool IsDirectory { get; set; }
         public bool IsDisabled { get; set; }
         public bool HasPathConflict { get; set; }
+        public bool HasGuidConflict { get; set; }
+        public List<string> ConflictingPluginGuids { get; set; } = new List<string>();
         public LocalPluginSource Source { get; set; }
         public string WorkshopId { get; set; }
+        public bool IsWorkshopSubscribed { get; set; }
+        public bool IsWorkshopDownloaded { get; set; }
+        public bool IsWorkshopConnected { get; set; }
+        public bool HasWorkshopManifest { get; set; }
+        public bool IsWorkshopPackageValid { get; set; }
+        public string WorkshopValidationError { get; set; }
+        public string WorkshopContentPath { get; set; }
         public int DllCount { get; set; }
         public List<ScannedPlugin> Plugins { get; set; } = new List<ScannedPlugin>();
     }

@@ -10,6 +10,9 @@ namespace StudentAgeModManager.Core
     /// <summary>拉取并解析中央索引 mods.json；成功后把索引里的镜像列表回写给 Downloader。</summary>
     public class IndexClient
     {
+        internal const string IndexOverrideEnvironmentVariable =
+            "STUDENTAGE_MODMANAGER_ENABLE_INDEX_OVERRIDE";
+
         /// <summary>正式渠道固定读取 main 分支索引。</summary>
         public const string DefaultIndexUrl =
             "https://raw.githubusercontent.com/white12666/StudentAgeModManager/main/mods.json";
@@ -177,12 +180,17 @@ namespace StudentAgeModManager.Core
         }
 
         /// <summary>
-        /// 本地调试：exe 同目录放 index_url.txt 可覆盖索引地址（支持 file:/// 或本地路径）。
+        /// 本地调试：显式设置 STUDENTAGE_MODMANAGER_ENABLE_INDEX_OVERRIDE=1 后，exe
+        /// 同目录的 index_url.txt 才可覆盖索引地址。正式运行永远不能被残留文件改道。
         /// </summary>
         private static string OverrideIndexUrl()
         {
             try
             {
+                if (!string.Equals(Environment.GetEnvironmentVariable(
+                        IndexOverrideEnvironmentVariable), "1", StringComparison.Ordinal))
+                    return null;
+
                 var p = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "index_url.txt");
                 if (File.Exists(p))
                 {

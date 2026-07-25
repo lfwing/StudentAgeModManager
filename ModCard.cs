@@ -145,14 +145,12 @@ namespace StudentAgeModManager
             _title.Text = string.IsNullOrWhiteSpace(Entry.name) ? Entry.id : Entry.name;
             string workshopId;
             bool valid = WorkshopItem.TryGetId(Entry, out workshopId);
-            bool connected = valid && LocalUnit != null;
+            bool discovered = valid && LocalUnit != null;
 
-            if (connected)
+            if (discovered)
             {
-                _desc.Text = "版本 " + (LocalUnit.DisplayVersion ?? "未知") + " · ID " +
-                             workshopId + " · " + LocalUnit.RelativePath;
-                SetStatus("Steam 工坊", SourceColor,
-                    "已收录", PositiveColor, "已接入", PositiveColor);
+                _desc.Text = BuildWorkshopDescription(LocalUnit, workshopId);
+                ApplyWorkshopStatus(LocalUnit, true);
             }
             else
             {
@@ -170,6 +168,7 @@ namespace StudentAgeModManager
             _btnMain.Visible = true;
             _btnMain.Enabled = valid;
             _btnMain.Text = valid ? "打开工坊页面" : "工坊信息无效";
+            ConfigureWorkshopToggle(LocalUnit);
         }
 
         private void ApplyLocalPluginState()
@@ -187,11 +186,12 @@ namespace StudentAgeModManager
 
             if (unit.Source == LocalPluginSource.SteamWorkshop)
             {
-                SetStatus("Steam 工坊", SourceColor,
-                    "未收录", NegativeColor, "已接入", PositiveColor);
+                _desc.Text = BuildWorkshopDescription(unit, unit.WorkshopId);
+                ApplyWorkshopStatus(unit, false);
                 _btnMain.Visible = true;
                 _btnMain.Enabled = true;
                 _btnMain.Text = "打开工坊页面";
+                ConfigureWorkshopToggle(unit);
                 return;
             }
 
@@ -202,6 +202,16 @@ namespace StudentAgeModManager
                 return;
             }
 
+            if (unit.HasGuidConflict)
+            {
+                SetStatus("本地", SourceColor,
+                    "未收录", NegativeColor, "重复 GUID", Color.DarkOrange);
+                _btnToggle.Visible = true;
+                _btnToggle.Enabled = true;
+                _btnToggle.Text = unit.IsDisabled ? "启用" : "禁用";
+                return;
+            }
+
             SetStatus("本地", SourceColor,
                 "未收录", NegativeColor,
                 unit.IsDisabled ? "未启用" : "已启用",
@@ -209,6 +219,74 @@ namespace StudentAgeModManager
             _btnToggle.Visible = true;
             _btnToggle.Enabled = true;
             _btnToggle.Text = unit.IsDisabled ? "启用" : "禁用";
+        }
+
+        private static string BuildWorkshopDescription(LocalPluginUnit unit, string workshopId)
+        {
+            string version = unit.Plugins.Count > 0
+                ? "版本 " + (unit.DisplayVersion ?? "未知") + " · "
+                : string.Empty;
+            string download = unit.IsWorkshopDownloaded ? "已下载" : "下载中/更新中";
+            string detail = string.IsNullOrWhiteSpace(unit.WorkshopValidationError)
+                ? string.Empty
+                : " · " + unit.WorkshopValidationError;
+            return version + "ID " + workshopId + " · 已订阅 · " + download + detail;
+        }
+
+        private void ApplyWorkshopStatus(LocalPluginUnit unit, bool registered)
+        {
+            string state;
+            Color stateColor;
+            if (unit.HasGuidConflict)
+            {
+                state = "重复 GUID";
+                stateColor = Color.DarkOrange;
+            }
+            else if (!unit.HasWorkshopManifest)
+            {
+                state = "声明缺失";
+                stateColor = NegativeColor;
+            }
+            else if (!unit.IsWorkshopPackageValid)
+            {
+                state = "包无效";
+                stateColor = NegativeColor;
+            }
+            else if (unit.IsDisabled)
+            {
+                state = "未启用";
+                stateColor = NegativeColor;
+            }
+            else if (!unit.IsWorkshopDownloaded)
+            {
+                state = "更新中";
+                stateColor = Color.DarkOrange;
+            }
+            else if (unit.IsWorkshopConnected)
+            {
+                state = "已接入";
+                stateColor = PositiveColor;
+            }
+            else
+            {
+                state = "待同步";
+                stateColor = Color.DarkOrange;
+            }
+
+            SetStatus("Steam 工坊", SourceColor,
+                registered ? "已收录" : "未收录",
+                registered ? PositiveColor : NegativeColor, state, stateColor);
+        }
+
+        private void ConfigureWorkshopToggle(LocalPluginUnit unit)
+        {
+            if (unit == null || !unit.IsWorkshopSubscribed) return;
+            _btnMain.Left = 12;
+            _btnToggle.Left = 140;
+            _btnToggle.Visible = true;
+            _btnToggle.Text = unit.IsDisabled ? "启用" : "禁用";
+            _btnToggle.Enabled = !unit.IsDisabled ||
+                (unit.IsWorkshopDownloaded && unit.IsWorkshopPackageValid);
         }
 
         private void SetStatus(string source, Color sourceColor,
@@ -243,6 +321,8 @@ namespace StudentAgeModManager
 
         private void ResetButtons()
         {
+            _btnMain.Left = 12;
+            _btnToggle.Left = 12;
             _btnMain.Visible = false;
             _btnMain.Enabled = false;
             _btnToggle.Visible = false;

@@ -1,14 +1,17 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
+using Microsoft.Win32.SafeHandles;
 
 namespace StudentAge.WorkshopBridge
 {
@@ -231,9 +234,7 @@ namespace StudentAge.WorkshopBridge
             }
 
             result.EnabledIdCount = enabledIds.Count;
-            // Links are cheap. Recreate bridge-owned reparse points on every start so an
-            // updated/moved Steam library can never leave an old target behind.
-            RemoveExistingLinks(linkRoot, result);
+            var desiredLinks = new Dictionary<ulong, string>();
 
             foreach (var workshopId in enabledIds.OrderBy(id => id))
             {
@@ -241,7 +242,6 @@ namespace StudentAge.WorkshopBridge
                 var itemRoot = Path.Combine(options.WorkshopRootPath, id);
                 var markerPath = Path.Combine(itemRoot, markerFileName);
                 var sourcePluginRoot = Path.Combine(itemRoot, WorkshopPluginRelativePath);
-                var destination = Path.Combine(linkRoot, id);
 
                 if (!currentSubscribedIds.Contains(workshopId))
                 {
@@ -327,25 +327,10 @@ namespace StudentAge.WorkshopBridge
                     continue;
                 }
 
-                if (File.Exists(destination) || Directory.Exists(destination))
-                {
-                    result.SkippedCount++;
-                    result.Error("桥接目标已被普通文件或目录占用，未覆盖: " + destination);
-                    continue;
-                }
-
-                string error;
-                if (JunctionManager.TryCreate(destination, sourcePluginRoot, out error))
-                {
-                    result.LinkedCount++;
-                    result.Info("已桥接工坊 DLL: " + id + " -> " + sourcePluginRoot);
-                }
-                else
-                {
-                    result.Error("创建工坊链接失败 " + id + ": " + error);
-                }
+                desiredLinks.Add(workshopId, Path.GetFullPath(sourcePluginRoot));
             }
 
+            ReconcileDesiredLinks(linkRoot, desiredLinks, result);
             result.Synchronized = true;
             return result;
         }
@@ -655,7 +640,7 @@ namespace StudentAge.WorkshopBridge
             }
         }
 
-        private static bool TryLoadAutoEnableState(string path, uint accountId,
+        internal static bool TryLoadAutoEnableState(string path, uint accountId,
             out HashSet<ulong> seenIds, out HashSet<ulong> pendingIds, out string error)
         {
             seenIds = new HashSet<ulong>();
@@ -714,7 +699,7 @@ namespace StudentAge.WorkshopBridge
             }
         }
 
-        private static bool TrySaveAutoEnableState(string path, uint accountId,
+        internal static bool TrySaveAutoEnableState(string path, uint accountId,
             HashSet<ulong> seenIds, HashSet<ulong> pendingIds, out string error)
         {
             error = null;
@@ -751,7 +736,7 @@ namespace StudentAge.WorkshopBridge
             }
         }
 
-        private static bool TryAppendActiveIds(string path, HashSet<ulong> ids,
+        internal static bool TryAppendActiveIds(string path, HashSet<ulong> ids,
             out int addedCount, out string error)
         {
             addedCount = 0;
@@ -809,13 +794,69 @@ namespace StudentAge.WorkshopBridge
             }
         }
 
-        private static bool IsExistingReparsePoint(string path)
+        internal static bool TrySetActiveId(string path, ulong id, bool enabled,
+            out bool changed, out string error)
+        {
+            changed = false;
+            error = null;
+            try
+            {
+                if (id == 0) throw new ArgumentOutOfRangeException(nameof(id));
+                if (enabled)
+                {
+                    int addedCount;
+                    bool appended = TryAppendActiveIds(path, new HashSet<ulong> { id },
+                        out addedCount, out error);
+                    changed = appended && addedCount > 0;
+                    return appended;
+                }
+
+                path = Path.GetFullPath(path);
+                if (Directory.Exists(path))
+                    throw new InvalidDataException("游戏 Mod 启用列表路径被目录占用。");
+                if (!File.Exists(path)) return true;
+                if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException("游戏 Mod 启用列表不能是重解析点。");
+                if (new FileInfo(path).Length > MaxAutoEnableStateBytes)
+                    throw new InvalidDataException("游戏 Mod 启用列表超过 1 MiB 限制。");
+
+                string canonicalId = id.ToString(CultureInfo.InvariantCulture);
+                var keptLines = new List<string>();
+                foreach (string rawLine in File.ReadAllLines(path))
+                {
+                    string line = (rawLine ?? string.Empty).Trim();
+                    if (string.Equals(line, canonicalId, StringComparison.Ordinal))
+                    {
+                        changed = true;
+                        continue;
+                    }
+                    keptLines.Add(rawLine ?? string.Empty);
+                }
+                if (!changed) return true;
+
+                string text = keptLines.Count == 0
+                    ? string.Empty
+                    : string.Join("\r\n", keptLines) + "\r\n";
+                byte[] bytes = Utf8NoBom.GetBytes(text);
+                if (bytes.Length > MaxAutoEnableStateBytes)
+                    throw new InvalidDataException("更新后的游戏 Mod 启用列表超过 1 MiB 限制。");
+                WriteFileAtomically(path, bytes);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        internal static bool IsExistingReparsePoint(string path)
         {
             return (File.Exists(path) || Directory.Exists(path)) &&
                 (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
         }
 
-        private static void WriteFileAtomically(string path, byte[] bytes)
+        internal static void WriteFileAtomically(string path, byte[] bytes)
         {
             if (bytes == null) throw new ArgumentNullException(nameof(bytes));
             path = Path.GetFullPath(path);
@@ -851,7 +892,7 @@ namespace StudentAge.WorkshopBridge
             }
         }
 
-        private static bool TryValidateManifest(string path, out string error)
+        internal static bool TryValidateManifest(string path, out string error)
         {
             error = null;
             try
@@ -913,7 +954,7 @@ namespace StudentAge.WorkshopBridge
             }
         }
 
-        private static HashSet<ulong> ReadEnabledIds(string path, BridgeResult result)
+        internal static HashSet<ulong> ReadEnabledIds(string path, BridgeResult result)
         {
             var ids = new HashSet<ulong>();
             path = Path.GetFullPath(path);
@@ -937,6 +978,90 @@ namespace StudentAge.WorkshopBridge
             return ids;
         }
 
+        private static void ReconcileDesiredLinks(string linkRoot,
+            IDictionary<ulong, string> desiredLinks, BridgeResult result)
+        {
+            string[] entries;
+            try
+            {
+                entries = Directory.GetFileSystemEntries(linkRoot);
+            }
+            catch (Exception ex)
+            {
+                result.Error("无法枚举已有工坊链接: " + ex.Message);
+                return;
+            }
+
+            var satisfiedIds = new HashSet<ulong>();
+            var blockedIds = new HashSet<ulong>();
+            foreach (var entry in entries)
+            {
+                ulong bridgeId;
+                if (!TryGetBridgeOwnedLinkId(entry, result, out bridgeId))
+                {
+                    if (bridgeId != 0 && desiredLinks.ContainsKey(bridgeId))
+                    {
+                        blockedIds.Add(bridgeId);
+                        result.SkippedCount++;
+                        result.Error("桥接目标已被普通文件或目录占用，未覆盖: " + entry);
+                    }
+                    continue;
+                }
+
+                string expectedTarget;
+                if (!desiredLinks.TryGetValue(bridgeId, out expectedTarget))
+                {
+                    TryDeleteBridgeLink(entry, result);
+                    continue;
+                }
+
+                bool pointsToExpectedTarget;
+                string targetError;
+                if (JunctionManager.TryPointsToSameDirectory(entry, expectedTarget,
+                        out pointsToExpectedTarget, out targetError) &&
+                    pointsToExpectedTarget)
+                {
+                    satisfiedIds.Add(bridgeId);
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(targetError))
+                    result.Warning("无法确认现有工坊联接目标，将安全重建 " + bridgeId +
+                        ": " + targetError);
+                else
+                    result.Info("工坊联接目标已变化，将重建: " + bridgeId);
+
+                if (!TryDeleteBridgeLink(entry, result))
+                    blockedIds.Add(bridgeId);
+            }
+
+            foreach (var desired in desiredLinks.OrderBy(pair => pair.Key))
+            {
+                if (satisfiedIds.Contains(desired.Key) || blockedIds.Contains(desired.Key))
+                    continue;
+
+                string id = desired.Key.ToString(CultureInfo.InvariantCulture);
+                string destination = Path.Combine(linkRoot, id);
+                if (PathEntryExists(destination))
+                {
+                    result.SkippedCount++;
+                    result.Error("桥接目标已被普通文件或目录占用，未覆盖: " + destination);
+                    continue;
+                }
+
+                string error;
+                if (JunctionManager.TryCreate(destination, desired.Value, out error))
+                {
+                    result.LinkedCount++;
+                    result.Info("已桥接工坊 DLL: " + id + " -> " + desired.Value);
+                }
+                else
+                {
+                    result.Error("创建工坊链接失败 " + id + ": " + error);
+                }
+            }
+        }
+
         private static void RemoveExistingLinks(string linkRoot, BridgeResult result)
         {
             string[] entries;
@@ -952,41 +1077,154 @@ namespace StudentAge.WorkshopBridge
 
             foreach (var entry in entries)
             {
-                try
-                {
-                    ulong bridgeId;
-                    var entryName = Path.GetFileName(entry);
-                    if (!ulong.TryParse(entryName, NumberStyles.None,
-                        CultureInfo.InvariantCulture, out bridgeId) || bridgeId == 0 ||
-                        !string.Equals(entryName, bridgeId.ToString(CultureInfo.InvariantCulture),
-                            StringComparison.Ordinal))
-                    {
-                        result.Warning("桥接目录中存在非标准 ID 项目，出于安全考虑保留: " + entry);
-                        continue;
-                    }
+                ulong bridgeId;
+                if (TryGetBridgeOwnedLinkId(entry, result, out bridgeId))
+                    TryDeleteBridgeLink(entry, result);
+            }
+        }
 
-                    var attributes = File.GetAttributes(entry);
-                    bool isDirectory = (attributes & FileAttributes.Directory) != 0;
-                    bool isReparsePoint = (attributes & FileAttributes.ReparsePoint) != 0;
-                    if (!isDirectory || !isReparsePoint)
-                    {
-                        result.Warning("桥接目录中存在非链接项目，出于安全考虑保留: " + entry);
-                        continue;
-                    }
+        private static bool TryGetBridgeOwnedLinkId(string entry, BridgeResult result,
+            out ulong bridgeId)
+        {
+            bridgeId = 0;
+            var entryName = Path.GetFileName(entry);
+            if (!ulong.TryParse(entryName, NumberStyles.None,
+                CultureInfo.InvariantCulture, out bridgeId) || bridgeId == 0 ||
+                !string.Equals(entryName, bridgeId.ToString(CultureInfo.InvariantCulture),
+                    StringComparison.Ordinal))
+            {
+                bridgeId = 0;
+                result.Warning("桥接目录中存在非标准 ID 项目，出于安全考虑保留: " + entry);
+                return false;
+            }
 
-                    Directory.Delete(entry, false);
-                    result.RemovedLinkCount++;
-                }
-                catch (Exception ex)
+            try
+            {
+                var attributes = File.GetAttributes(entry);
+                bool isDirectory = (attributes & FileAttributes.Directory) != 0;
+                bool isReparsePoint = (attributes & FileAttributes.ReparsePoint) != 0;
+                if (!isDirectory || !isReparsePoint)
                 {
-                    result.Error("清理旧工坊链接失败 " + entry + ": " + ex.Message);
+                    result.Warning("桥接目录中存在非链接项目，出于安全考虑保留: " + entry);
+                    return false;
                 }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                result.Error("无法检查已有工坊链接 " + entry + ": " + ex.Message);
+                return false;
+            }
+        }
+
+        private static bool TryDeleteBridgeLink(string entry, BridgeResult result)
+        {
+            try
+            {
+                Directory.Delete(entry, false);
+                result.RemovedLinkCount++;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                result.Error("清理旧工坊链接失败 " + entry + ": " + ex.Message);
+                return false;
+            }
+        }
+
+        private static bool PathEntryExists(string path)
+        {
+            try
+            {
+                File.GetAttributes(path);
+                return true;
+            }
+            catch (FileNotFoundException)
+            {
+                return false;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return false;
+            }
+            catch
+            {
+                // An inaccessible path still occupies the destination and must never be
+                // overwritten based on an existence probe failure.
+                return true;
             }
         }
     }
 
     internal static class JunctionManager
     {
+        private const uint FileFlagBackupSemantics = 0x02000000;
+
+        public static bool TryPointsToSameDirectory(string junctionPath, string targetPath,
+            out bool pointsToTarget, out string error)
+        {
+            pointsToTarget = false;
+            error = null;
+            try
+            {
+                DirectoryIdentity junctionIdentity;
+                if (!TryGetDirectoryIdentity(junctionPath, out junctionIdentity, out error))
+                    return false;
+
+                DirectoryIdentity targetIdentity;
+                if (!TryGetDirectoryIdentity(targetPath, out targetIdentity, out error))
+                    return false;
+
+                pointsToTarget = junctionIdentity.VolumeSerialNumber ==
+                        targetIdentity.VolumeSerialNumber &&
+                    junctionIdentity.FileIndexHigh == targetIdentity.FileIndexHigh &&
+                    junctionIdentity.FileIndexLow == targetIdentity.FileIndexLow;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        private static bool TryGetDirectoryIdentity(string path,
+            out DirectoryIdentity identity, out string error)
+        {
+            identity = default(DirectoryIdentity);
+            error = null;
+            path = Path.GetFullPath(path);
+            using (SafeFileHandle handle = CreateFile(path, 0,
+                FileShare.Read | FileShare.Write | FileShare.Delete, IntPtr.Zero,
+                FileMode.Open, FileFlagBackupSemantics, IntPtr.Zero))
+            {
+                if (handle == null || handle.IsInvalid)
+                {
+                    int code = Marshal.GetLastWin32Error();
+                    error = "无法打开目录 “" + path + "”: " +
+                        new Win32Exception(code).Message;
+                    return false;
+                }
+
+                ByHandleFileInformation information;
+                if (!GetFileInformationByHandle(handle, out information))
+                {
+                    int code = Marshal.GetLastWin32Error();
+                    error = "无法读取目录身份 “" + path + "”: " +
+                        new Win32Exception(code).Message;
+                    return false;
+                }
+
+                identity = new DirectoryIdentity
+                {
+                    VolumeSerialNumber = information.VolumeSerialNumber,
+                    FileIndexHigh = information.FileIndexHigh,
+                    FileIndexLow = information.FileIndexLow,
+                };
+                return true;
+            }
+        }
+
         public static bool TryCreate(string junctionPath, string targetPath, out string error)
         {
             error = null;
@@ -1069,6 +1307,38 @@ namespace StudentAge.WorkshopBridge
                 '"', '&', '|', '<', '>', '^', '%', '!', '\r', '\n'
             }) >= 0;
         }
+
+        private struct DirectoryIdentity
+        {
+            public uint VolumeSerialNumber;
+            public uint FileIndexHigh;
+            public uint FileIndexLow;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ByHandleFileInformation
+        {
+            public uint FileAttributes;
+            public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+            public uint VolumeSerialNumber;
+            public uint FileSizeHigh;
+            public uint FileSizeLow;
+            public uint NumberOfLinks;
+            public uint FileIndexHigh;
+            public uint FileIndexLow;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFile(string fileName,
+            uint desiredAccess, FileShare shareMode, IntPtr securityAttributes,
+            FileMode creationDisposition, uint flagsAndAttributes, IntPtr templateFile);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetFileInformationByHandle(SafeFileHandle fileHandle,
+            out ByHandleFileInformation fileInformation);
     }
 
     internal sealed class VdfValue

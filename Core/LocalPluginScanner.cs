@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using StudentAge.WorkshopBridge;
 
 namespace StudentAgeModManager.Core
 {
@@ -20,14 +21,22 @@ namespace StudentAgeModManager.Core
 
         public List<LocalPluginUnit> Scan(string gameDir)
         {
+            return Scan(gameDir, null);
+        }
+
+        public List<LocalPluginUnit> Scan(string gameDir,
+            IEnumerable<WorkshopManagedItem> managedWorkshopItems)
+        {
             if (string.IsNullOrWhiteSpace(gameDir))
                 throw new ArgumentException("游戏目录不能为空。", nameof(gameDir));
 
             string gameRoot = Path.GetFullPath(gameDir);
             string pluginRoot = Path.Combine(gameRoot, "BepInEx", "plugins");
             string disabledRoot = Path.Combine(gameRoot, "BepInEx", "ModManager", "disabled");
+            List<WorkshopManagedItem> workshopItems = managedWorkshopItems?.ToList();
             var result = new List<LocalPluginUnit>();
-            if (!Directory.Exists(pluginRoot) && !Directory.Exists(disabledRoot))
+            if (!Directory.Exists(pluginRoot) && !Directory.Exists(disabledRoot) &&
+                (workshopItems == null || workshopItems.Count == 0))
                 return result;
 
             AppDomain metadataDomain = null;
@@ -47,7 +56,10 @@ namespace StudentAgeModManager.Core
                 var budget = new ScanBudget();
 
                 ScanEnabledLocalUnits(gameRoot, pluginRoot, probe, budget, result);
-                ScanWorkshopUnits(gameRoot, pluginRoot, probe, budget, result);
+                if (workshopItems == null)
+                    ScanWorkshopUnits(gameRoot, pluginRoot, probe, budget, result);
+                else
+                    ScanManagedWorkshopUnits(gameRoot, workshopItems, probe, budget, result);
                 ScanDisabledLocalUnits(gameRoot, disabledRoot, probe, budget, result);
             }
             finally
@@ -64,6 +76,8 @@ namespace StudentAgeModManager.Core
                 foreach (var unit in group) unit.HasPathConflict = true;
             }
 
+            MarkGuidConflicts(result);
+
             return result
                 .OrderBy(unit => unit.Source)
                 .ThenBy(unit => unit.DisplayName, StringComparer.CurrentCultureIgnoreCase)
@@ -71,11 +85,99 @@ namespace StudentAgeModManager.Core
                 .ToList();
         }
 
+        private static void ScanManagedWorkshopUnits(string gameRoot,
+            IEnumerable<WorkshopManagedItem> items, PluginMetadataProbe probe,
+            ScanBudget budget, List<LocalPluginUnit> result)
+        {
+            foreach (WorkshopManagedItem item in items.Where(value => value != null)
+                .OrderBy(value => value.WorkshopId, StringComparer.Ordinal))
+            {
+                LocalPluginUnit unit = null;
+                string relative = CombineRelative("Steam Workshop", item.WorkshopId,
+                    "BepInEx", "plugins");
+                if (item.IsValidBridgePackage && !string.IsNullOrWhiteSpace(item.PluginRootPath))
+                {
+                    unit = ScanUnit(gameRoot, item.PluginRootPath, relative, relative,
+                        ".workshop/" + item.WorkshopId, true, !item.IsEnabled,
+                        LocalPluginSource.SteamWorkshop, item.WorkshopId, probe, budget);
+                }
+                if (unit == null)
+                {
+                    unit = new LocalPluginUnit
+                    {
+                        UnitKey = ".workshop/" + item.WorkshopId,
+                        DisplayName = "Steam Workshop " + item.WorkshopId,
+                        DisplayVersion = "未知",
+                        RelativePath = relative,
+                        EnabledRelativePath = relative,
+                        IsDirectory = true,
+                        IsDisabled = !item.IsEnabled,
+                        Source = LocalPluginSource.SteamWorkshop,
+                        WorkshopId = item.WorkshopId,
+                        DllCount = item.DllCount,
+                    };
+                }
+
+                unit.IsDisabled = !item.IsEnabled;
+                unit.IsWorkshopSubscribed = item.IsSubscribed;
+                unit.IsWorkshopDownloaded = item.IsDownloaded;
+                unit.IsWorkshopConnected = item.IsConnected;
+                unit.HasWorkshopManifest = item.HasBridgeManifest;
+                unit.IsWorkshopPackageValid = item.IsValidBridgePackage;
+                unit.WorkshopValidationError = item.ValidationError;
+                unit.WorkshopContentPath = item.ContentPath;
+                result.Add(unit);
+            }
+        }
+
+        private static void MarkGuidConflicts(IList<LocalPluginUnit> units)
+        {
+            var conflicts = units
+                .Where(IsActiveLoadCandidate)
+                .SelectMany(unit => unit.Plugins
+                    .Where(plugin => !string.IsNullOrWhiteSpace(plugin.Guid))
+                    .Select(plugin => new { Unit = unit, Guid = plugin.Guid.Trim() }))
+                .GroupBy(item => item.Guid, StringComparer.OrdinalIgnoreCase)
+                .Select(group => new
+                {
+                    Guid = group.Key,
+                    Units = group.Select(item => item.Unit).Distinct().ToList(),
+                })
+                .Where(group => group.Units.Count > 1)
+                .ToList();
+
+            foreach (var conflict in conflicts)
+            {
+                foreach (LocalPluginUnit unit in conflict.Units)
+                {
+                    unit.HasGuidConflict = true;
+                    if (!unit.ConflictingPluginGuids.Contains(conflict.Guid,
+                        StringComparer.OrdinalIgnoreCase))
+                        unit.ConflictingPluginGuids.Add(conflict.Guid);
+                }
+            }
+        }
+
+        private static bool IsActiveLoadCandidate(LocalPluginUnit unit)
+        {
+            if (unit == null || unit.IsDisabled) return false;
+            return unit.Source != LocalPluginSource.SteamWorkshop || unit.IsWorkshopConnected;
+        }
+
         private static AppDomain CreateMetadataDomain()
         {
+            string hostDirectory = null;
+            try
+            {
+                hostDirectory = Path.GetDirectoryName(
+                    typeof(LocalPluginScanner).Assembly.Location);
+            }
+            catch { }
             var setup = new AppDomainSetup
             {
-                ApplicationBase = AppDomain.CurrentDomain.BaseDirectory,
+                ApplicationBase = string.IsNullOrWhiteSpace(hostDirectory)
+                    ? AppDomain.CurrentDomain.BaseDirectory
+                    : hostDirectory,
                 ShadowCopyFiles = "false",
             };
             return AppDomain.CreateDomain("StudentAge.PluginMetadata." + Guid.NewGuid().ToString("N"),
@@ -163,7 +265,15 @@ namespace StudentAgeModManager.Core
                 var unit = ScanUnit(gameRoot, entry, relative, relative,
                     ".workshop/" + workshopId, true, false,
                     LocalPluginSource.SteamWorkshop, workshopId, probe, budget);
-                if (unit != null) result.Add(unit);
+                if (unit != null)
+                {
+                    unit.IsWorkshopSubscribed = true;
+                    unit.IsWorkshopDownloaded = true;
+                    unit.IsWorkshopConnected = true;
+                    unit.HasWorkshopManifest = true;
+                    unit.IsWorkshopPackageValid = true;
+                    result.Add(unit);
+                }
             }
         }
 
@@ -432,6 +542,7 @@ namespace StudentAgeModManager.Core
             string pluginRoot = Path.GetFullPath(Path.Combine(gameRoot, "BepInEx", "plugins"))
                 .TrimEnd('\\', '/');
             string current = Path.GetDirectoryName(Path.GetFullPath(assemblyPath));
+            if (!string.IsNullOrEmpty(current)) directories.Add(current);
             while (!string.IsNullOrEmpty(current))
             {
                 string normalized = current.TrimEnd('\\', '/');
@@ -439,7 +550,8 @@ namespace StudentAgeModManager.Core
                     !normalized.StartsWith(pluginRoot + Path.DirectorySeparatorChar,
                         StringComparison.OrdinalIgnoreCase))
                     break;
-                directories.Add(current);
+                if (!directories.Contains(current, StringComparer.OrdinalIgnoreCase))
+                    directories.Add(current);
                 if (string.Equals(normalized, pluginRoot, StringComparison.OrdinalIgnoreCase)) break;
                 current = Path.GetDirectoryName(normalized);
             }

@@ -67,7 +67,7 @@ namespace StudentAge.WorkshopBridge
             Directory.CreateDirectory(Path.GetDirectoryName(logPath));
             using (var writer = new StreamWriter(logPath, false))
             {
-                writer.WriteLine("StudentAge Workshop Bridge 0.2.0");
+                writer.WriteLine("StudentAge Workshop Bridge 0.3.1");
                 writer.WriteLine(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
                 writer.WriteLine("Synchronized: " + result.Synchronized);
                 writer.WriteLine("Enabled IDs: " + result.EnabledIdCount);

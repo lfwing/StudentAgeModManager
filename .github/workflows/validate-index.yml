@@ -15,6 +15,7 @@ on:
       - "ModCard.cs"
       - "WheelFlowLayoutPanel.cs"
       - "ModManager.Tests/**"
+      - "release_assets/BepInEx-5.4.23-package.zip"
       - "StudentAgeModManager.csproj"
       - ".github/workflows/validate-index.yml"
   workflow_dispatch:

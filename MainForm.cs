@@ -7,6 +7,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using StudentAge.WorkshopBridge;
 using StudentAgeModManager.Core;
 
 namespace StudentAgeModManager
@@ -15,6 +16,8 @@ namespace StudentAgeModManager
     {
         private const string ContributionUrl =
             "https://github.com/white12666/StudentAgeModManager/blob/main/CONTRIBUTING.md";
+        private const string ManagerReleaseUrl =
+            "https://github.com/white12666/StudentAgeModManager/releases/latest";
         private static readonly Font SectionFont =
             new Font("Microsoft YaHei UI", 9.5f, FontStyle.Bold);
         private static readonly Font SubmissionFont =
@@ -24,7 +27,6 @@ namespace StudentAgeModManager
         private readonly Label _lblBepInEx = new Label();
         private readonly Button _btnRefresh = new Button();
         private readonly Button _btnInstallBep = new Button();
-        private readonly ComboBox _cmbMirror = new ComboBox();
         private readonly WheelFlowLayoutPanel _flow = new WheelFlowLayoutPanel();
         private readonly Label _lblStatus = new Label();
         private readonly ProgressBar _progress = new ProgressBar();
@@ -46,11 +48,22 @@ namespace StudentAgeModManager
         private readonly Downloader _downloader = new Downloader();
         private readonly WorkshopPageLauncher _workshopPageLauncher =
             new WorkshopPageLauncher();
+        private Func<string, BridgeResult> _workshopSynchronizer = gameDir =>
+            WorkshopBridgeSynchronizer.Synchronize(BridgeOptions.ForGame(gameDir));
+        private Func<string, WorkshopDiscoveryResult> _workshopDiscoverer = gameDir =>
+            WorkshopBridgeManagement.Discover(BridgeOptions.ForGame(gameDir));
+        private Func<string, string, bool, WorkshopToggleResult> _workshopToggler =
+            (gameDir, workshopId, enabled) => WorkshopBridgeManagement.SetEnabled(
+                BridgeOptions.ForGame(gameDir), workshopId, enabled);
+        private Func<bool> _isGameRunning = ModInstaller.IsGameRunning;
+        private Action<string> _workshopToggleErrorPresenter;
         private IndexClient _indexClient;
         private ModIndex _index;
+        private WorkshopDiscoveryResult _workshopDiscovery;
         private List<LocalPluginUnit> _localUnits = new List<LocalPluginUnit>();
         private int _localPluginCount;
         private bool _busy;
+        private bool _initializeOnShown = true;
 
         public MainForm()
         {
@@ -61,9 +74,14 @@ namespace StudentAgeModManager
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Microsoft YaHei UI", 9f);
             BackColor = Color.FromArgb(245, 245, 248);
+            _workshopToggleErrorPresenter = message => MessageBox.Show(this, message,
+                "工坊操作失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 
             BuildLayout();
-            Shown += async (s, e) => await InitializeAsync();
+            Shown += async (s, e) =>
+            {
+                if (_initializeOnShown) await InitializeAsync();
+            };
         }
 
         private static string CurrentVersion()
@@ -80,21 +98,13 @@ namespace StudentAgeModManager
             _lblGameDir.AutoEllipsis = true;
 
             _lblBepInEx.Location = new Point(14, 34);
-            _lblBepInEx.Size = new Size(286, 22);
+            _lblBepInEx.Size = new Size(500, 22);
             _lblBepInEx.AutoEllipsis = true;
 
-            _btnRefresh.Text = "刷新";
-            _btnRefresh.Location = new Point(440, 30);
+            _btnRefresh.Text = "同步刷新";
+            _btnRefresh.Location = new Point(531, 30);
             _btnRefresh.Size = new Size(75, 26);
-            _btnRefresh.Click += async (s, e) => await RefreshIndexAsync();
-
-            _cmbMirror.DropDownStyle = ComboBoxStyle.DropDownList;
-            _cmbMirror.Items.AddRange(new object[] { "自动(直连+镜像)", "强制镜像", "强制直连" });
-            _cmbMirror.SelectedIndex = 0;
-            _cmbMirror.Location = new Point(310, 31);
-            _cmbMirror.Size = new Size(120, 24);
-            _cmbMirror.SelectedIndexChanged += (s, e) =>
-                _downloader.Mode = (MirrorMode)_cmbMirror.SelectedIndex;
+            _btnRefresh.Click += async (s, e) => await RefreshIndexAsync(true);
 
             // ── 工坊操作说明（始终显示） ──
             _workshopGuide.Location = new Point(0, 62);
@@ -109,8 +119,8 @@ namespace StudentAgeModManager
             _workshopSetupText.Size = new Size(592, 36);
             _workshopSetupText.ForeColor = Color.FromArgb(35, 78, 121);
             _workshopSetupText.Text =
-                "点击“一键安装完整前置”。中央索引只是推荐目录，不是加载白名单；\r\n" +
-                "任何合法工坊 DLL 均可接入，新订阅在下载完成后的下一次启动自动启用。";
+                "点击“一键安装完整前置”（内置包，无需联网）。中央索引只是推荐目录，不是加载白名单；\r\n" +
+                "任何合法工坊 DLL 均可接入；新订阅下载后点“同步刷新”或下次启动游戏时自动启用。";
 
             _workshopManageTitle.Location = new Point(14, 68);
             _workshopManageTitle.Size = new Size(592, 19);
@@ -121,8 +131,8 @@ namespace StudentAgeModManager
             _workshopManageText.Size = new Size(592, 36);
             _workshopManageText.ForeColor = Color.FromArgb(35, 78, 121);
             _workshopManageText.Text =
-                "工坊订阅/取消在 Steam，开关在游戏“本地”页；未收录但已接入的工坊也会显示。\r\n" +
-                "手动 DLL 显示为“本地 · 未收录”，可在下方开关；所有改动重启后生效。";
+                "工坊订阅/取消在 Steam；游戏关闭时，可在下方或游戏“本地”页开关。\r\n" +
+                "未收录工坊也会显示；禁用仍接收更新。手动 DLL 显示为“本地 · 未收录”。";
 
             _workshopGuide.Controls.AddRange(new Control[]
             {
@@ -188,7 +198,7 @@ namespace StudentAgeModManager
 
             Controls.AddRange(new Control[]
             {
-                _lblGameDir, _lblBepInEx, _btnRefresh, _cmbMirror, _workshopGuide,
+                _lblGameDir, _lblBepInEx, _btnRefresh, _workshopGuide,
                 _banner, _flow, _submissionFooter, _lblStatus, _progress,
             });
         }
@@ -212,7 +222,7 @@ namespace StudentAgeModManager
 
             _lblGameDir.Text = "游戏目录: " + _gameDir;
             _state = new LocalState(_gameDir);
-            _installer = new ModInstaller(_state, _downloader);
+            _installer = new ModInstaller(_state);
             _pluginScanner = new LocalPluginScanner();
             _localPluginManager = new LocalPluginManager(_state);
             var workshopMetadata = new WorkshopMetadataService(
@@ -238,7 +248,7 @@ namespace StudentAgeModManager
             {
                 _lblBepInEx.Text = "⚠ 工坊 DLL 支持缺失或需更新";
                 _lblBepInEx.ForeColor = Color.DarkOrange;
-                _bannerText.Text = "新订阅的合法 DLL：下载完成后的下次启动自动启用。";
+                _bannerText.Text = "新订阅 DLL：下载后点“同步刷新”或下次启动自动启用。";
                 _btnInstallBep.Text = "安装工坊 DLL 支持";
             }
             else
@@ -256,11 +266,20 @@ namespace StudentAgeModManager
 
         // ═══════════════ 索引拉取与列表渲染 ═══════════════
 
-        private async Task RefreshIndexAsync()
+        private async Task RefreshIndexAsync(bool synchronizeWorkshop = false)
         {
             if (_busy) return;
-            SetBusy(true, "正在获取工坊列表并扫描本地插件...");
-            Task<List<LocalPluginUnit>> localScan = ScanLocalPluginsAsync();
+            int listScrollOffset = CurrentListScrollOffset();
+            SetBusy(true, synchronizeWorkshop
+                ? "正在同步工坊并刷新列表..."
+                : "正在获取工坊列表并扫描本地插件...");
+            Task<WorkshopRefreshOutcome> workshopSync =
+                SynchronizeWorkshopForRefreshAsync(synchronizeWorkshop);
+            // Manual refresh discovers state only after synchronization; startup discovery can
+            // run alongside the online index fetch because it does not mutate anything.
+            Task<WorkshopDiscoveryResult> workshopDiscovery = synchronizeWorkshop
+                ? null
+                : DiscoverWorkshopItemsAsync();
             Exception indexError = null;
             bool keptPreviousIndex = _index != null;
             try
@@ -276,19 +295,26 @@ namespace StudentAgeModManager
                         _index = new ModIndex { mods = new List<ModEntry>() };
                 }
 
-                _localUnits = await localScan;
-                RenderList();
+                WorkshopRefreshOutcome workshopOutcome = await workshopSync;
+                if (workshopDiscovery == null)
+                    workshopDiscovery = DiscoverWorkshopItemsAsync();
+                _workshopDiscovery = await workshopDiscovery;
+                _localUnits = await ScanLocalPluginsAsync(_workshopDiscovery != null &&
+                    _workshopDiscovery.Succeeded ? _workshopDiscovery.Items : null);
+                RenderListAtScrollOffset(listScrollOffset);
+                string workshopNote = DescribeWorkshopRefresh(workshopOutcome) +
+                    DescribeWorkshopDiscovery(_workshopDiscovery);
                 if (indexError == null)
                 {
                     CheckSelfUpdate();
-                    SetStatus("列表已更新（" + _index.mods.Count + " 个工坊条目，" +
+                    SetStatus(workshopNote + "列表已更新（" + _index.mods.Count + " 个工坊条目，" +
                         _localPluginCount + " 个已安装插件单元，索引更新于 " +
                         (_index.updatedAt ?? "?") + "）");
                 }
                 else
                 {
                     string previousNote = keptPreviousIndex ? "保留上次工坊目录；" : string.Empty;
-                    SetStatus("工坊列表获取失败；" + previousNote + "已显示 " +
+                    SetStatus(workshopNote + "工坊列表获取失败；" + previousNote + "已显示 " +
                         _localPluginCount + " 个本地插件单元。" + indexError.Message);
                     MessageBox.Show(this,
                         "无法获取工坊列表，" +
@@ -310,25 +336,185 @@ namespace StudentAgeModManager
             }
         }
 
-        private Task<List<LocalPluginUnit>> ScanLocalPluginsAsync()
+        private Task<WorkshopDiscoveryResult> DiscoverWorkshopItemsAsync()
+        {
+            if (string.IsNullOrWhiteSpace(_gameDir))
+                return Task.FromResult(new WorkshopDiscoveryResult());
+            string gameDir = _gameDir;
+            return Task.Run(() => _workshopDiscoverer(gameDir));
+        }
+
+        private static string DescribeWorkshopDiscovery(WorkshopDiscoveryResult discovery)
+        {
+            return discovery != null && !discovery.Succeeded &&
+                   !string.IsNullOrWhiteSpace(discovery.Error)
+                ? "工坊本地状态不可用；"
+                : string.Empty;
+        }
+
+        private Task<WorkshopRefreshOutcome> SynchronizeWorkshopForRefreshAsync(bool requested)
+        {
+            if (!requested)
+                return Task.FromResult(new WorkshopRefreshOutcome());
+
+            string gameDir = _gameDir;
+            ModInstaller installer = _installer;
+            return Task.Run(() =>
+            {
+                if (installer == null || !installer.IsBepInExInstalled() ||
+                    !installer.IsWorkshopBridgeInstalled())
+                    return new WorkshopRefreshOutcome
+                    {
+                        State = WorkshopRefreshState.PrerequisiteMissing,
+                    };
+
+                if (_isGameRunning())
+                    return new WorkshopRefreshOutcome
+                    {
+                        State = WorkshopRefreshState.GameRunning,
+                    };
+
+                try
+                {
+                    BridgeResult result = _workshopSynchronizer(gameDir);
+                    WriteWorkshopRefreshLog(gameDir, result, null);
+                    return new WorkshopRefreshOutcome
+                    {
+                        State = WorkshopRefreshState.Completed,
+                        Result = result,
+                    };
+                }
+                catch (Exception ex)
+                {
+                    WriteWorkshopRefreshLog(gameDir, null, ex);
+                    return new WorkshopRefreshOutcome
+                    {
+                        State = WorkshopRefreshState.Failed,
+                    };
+                }
+            });
+        }
+
+        private static string DescribeWorkshopRefresh(WorkshopRefreshOutcome outcome)
+        {
+            if (outcome == null || outcome.State == WorkshopRefreshState.NotRequested ||
+                outcome.State == WorkshopRefreshState.PrerequisiteMissing)
+                return string.Empty;
+            if (outcome.State == WorkshopRefreshState.GameRunning)
+                return "游戏运行中，已跳过工坊同步；";
+            if (outcome.State == WorkshopRefreshState.Failed)
+                return "工坊同步失败（见 BepInEx/ModManager/WorkshopRefresh.log）；";
+
+            BridgeResult result = outcome.Result;
+            if (result == null || result.ErrorCount > 0 || !result.Synchronized)
+                return "工坊同步未完全成功（见 BepInEx/ModManager/WorkshopRefresh.log）；";
+
+            var changes = new List<string>();
+            if (result.BaselineIdCount > 0)
+                changes.Add("建立基线 " + result.BaselineIdCount);
+            if (result.AutoEnabledIdCount > 0)
+                changes.Add("自动启用 " + result.AutoEnabledIdCount);
+            if (result.LinkedCount > 0)
+                changes.Add("新增联接 " + result.LinkedCount);
+            if (result.RemovedLinkCount > 0)
+                changes.Add("移除联接 " + result.RemovedLinkCount);
+            return changes.Count == 0
+                ? "工坊已同步；"
+                : "工坊已同步（" + string.Join("，", changes) + "）；";
+        }
+
+        private static void WriteWorkshopRefreshLog(string gameDir, BridgeResult result,
+            Exception error)
+        {
+            try
+            {
+                string path = Path.Combine(gameDir, "BepInEx", "ModManager",
+                    "WorkshopRefresh.log");
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                using (var writer = new StreamWriter(path, false))
+                {
+                    writer.WriteLine("StudentAge Workshop synchronization from Mod Manager");
+                    writer.WriteLine(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+                    if (error != null)
+                    {
+                        writer.WriteLine("Failed before synchronization.");
+                        writer.WriteLine();
+                        writer.WriteLine(error);
+                        return;
+                    }
+
+                    writer.WriteLine("Synchronized: " + result.Synchronized);
+                    writer.WriteLine("Enabled IDs: " + result.EnabledIdCount);
+                    writer.WriteLine("Baseline IDs: " + result.BaselineIdCount);
+                    writer.WriteLine("Auto-enabled IDs: " + result.AutoEnabledIdCount);
+                    writer.WriteLine("Linked: " + result.LinkedCount);
+                    writer.WriteLine("Removed stale links: " + result.RemovedLinkCount);
+                    writer.WriteLine("Skipped: " + result.SkippedCount);
+                    writer.WriteLine("Errors: " + result.ErrorCount);
+                    writer.WriteLine();
+                    foreach (string message in result.Messages) writer.WriteLine(message);
+                }
+            }
+            catch
+            {
+                // Refresh remains usable even if diagnostics cannot be written.
+            }
+        }
+
+        private enum WorkshopRefreshState
+        {
+            NotRequested,
+            PrerequisiteMissing,
+            GameRunning,
+            Completed,
+            Failed,
+        }
+
+        private sealed class WorkshopRefreshOutcome
+        {
+            public WorkshopRefreshState State { get; set; }
+            public BridgeResult Result { get; set; }
+        }
+
+        private Task<List<LocalPluginUnit>> ScanLocalPluginsAsync(
+            IEnumerable<WorkshopManagedItem> workshopItems = null)
         {
             if (_pluginScanner == null || string.IsNullOrEmpty(_gameDir))
                 return Task.FromResult(new List<LocalPluginUnit>());
             string gameDir = _gameDir;
-            return Task.Run(() => _pluginScanner.Scan(gameDir));
+            List<WorkshopManagedItem> items = workshopItems?.ToList();
+            return Task.Run(() => _pluginScanner.Scan(gameDir, items));
         }
 
         private void RenderList()
+        {
+            RenderListAtScrollOffset(CurrentListScrollOffset());
+        }
+
+        private void RenderListAtScrollOffset(int requestedScrollOffset)
         {
             _flow.SuspendLayout();
             ClearRenderedControls();
 
             var indexedMods = _index?.mods ?? new List<ModEntry>();
             var localUnits = _localUnits ?? new List<LocalPluginUnit>();
-            _localPluginCount = localUnits.Count;
+            var indexedWorkshopIds = new HashSet<string>(indexedMods
+                .Select(mod =>
+                {
+                    string id;
+                    return WorkshopItem.TryGetId(mod, out id) ? id : null;
+                })
+                .Where(id => id != null), StringComparer.Ordinal);
+            _localPluginCount = localUnits.Count(unit =>
+                unit.Source != LocalPluginSource.SteamWorkshop ||
+                unit.HasWorkshopManifest || indexedWorkshopIds.Contains(unit.WorkshopId));
             var consumedWorkshopUnits = new HashSet<LocalPluginUnit>();
+            var visibleWorkshopUnits = localUnits.Where(unit =>
+                unit.Source == LocalPluginSource.SteamWorkshop &&
+                unit.HasWorkshopManifest).ToList();
+            bool hasWorkshopSection = indexedMods.Count > 0 || visibleWorkshopUnits.Count > 0;
 
-            if (indexedMods.Count > 0)
+            if (hasWorkshopSection)
             {
                 _flow.Controls.Add(CreateSectionLabel("Steam 创意工坊目录"));
                 foreach (var mod in indexedMods)
@@ -346,30 +532,57 @@ namespace StudentAgeModManager
                     var card = new ModCard();
                     card.Bind(mod, installedUnit);
                     card.WorkshopPageClicked += OpenWorkshopPage;
+                    card.ToggleLocalClicked += TogglePlugin;
                     card.SetBusy(_busy);
                     _flow.Controls.Add(card);
                 }
-            }
 
-            var remainingLocalUnits = localUnits
-                .Where(unit => !consumedWorkshopUnits.Contains(unit)).ToList();
-            if (remainingLocalUnits.Count > 0)
-            {
-                _flow.Controls.Add(CreateSectionLabel("本地已安装插件"));
-                foreach (var unit in remainingLocalUnits)
+                foreach (var unit in visibleWorkshopUnits.Where(unit =>
+                    !consumedWorkshopUnits.Contains(unit)))
                 {
                     var card = new ModCard();
                     card.BindLocal(unit);
                     card.WorkshopPageClicked += OpenWorkshopPage;
-                    card.ToggleLocalClicked += ToggleLocalPlugin;
+                    card.ToggleLocalClicked += TogglePlugin;
                     card.SetBusy(_busy);
                     _flow.Controls.Add(card);
                 }
             }
 
-            if (indexedMods.Count == 0 && remainingLocalUnits.Count == 0)
+            var localPluginUnits = localUnits.Where(unit =>
+                unit.Source != LocalPluginSource.SteamWorkshop).ToList();
+            if (localPluginUnits.Count > 0)
+            {
+                _flow.Controls.Add(CreateSectionLabel("本地已安装插件"));
+                foreach (var unit in localPluginUnits)
+                {
+                    var card = new ModCard();
+                    card.BindLocal(unit);
+                    card.WorkshopPageClicked += OpenWorkshopPage;
+                    card.ToggleLocalClicked += TogglePlugin;
+                    card.SetBusy(_busy);
+                    _flow.Controls.Add(card);
+                }
+            }
+
+            if (!hasWorkshopSection && localPluginUnits.Count == 0)
                 _flow.Controls.Add(CreateSectionLabel("未发现工坊目录条目或本地 BepInEx 插件。"));
-            _flow.ResumeLayout();
+            _flow.ResumeLayout(true);
+            RestoreListScrollOffset(requestedScrollOffset);
+        }
+
+        private int CurrentListScrollOffset()
+        {
+            return Math.Max(0, -_flow.AutoScrollPosition.Y);
+        }
+
+        private void RestoreListScrollOffset(int requestedScrollOffset)
+        {
+            _flow.PerformLayout();
+            int maximum = Math.Max(0,
+                _flow.DisplayRectangle.Height - _flow.ClientSize.Height);
+            int target = Math.Max(0, Math.Min(requestedScrollOffset, maximum));
+            _flow.AutoScrollPosition = new Point(0, target);
         }
 
         private void ClearRenderedControls()
@@ -405,7 +618,9 @@ namespace StudentAgeModManager
                     "管理器更新", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
                 if (r == DialogResult.Yes)
                 {
-                    try { Process.Start(_index.manager.downloadUrl); } catch { }
+                    // The text index may arrive through a third-party fallback mirror. Never
+                    // allow it to choose an executable download destination.
+                    try { Process.Start(ManagerReleaseUrl); } catch { }
                 }
             }
         }
@@ -422,7 +637,7 @@ namespace StudentAgeModManager
                         ? "已在 Steam 客户端打开工坊页面；"
                         : "已在浏览器打开工坊页面；") +
                     "订阅或取消订阅请在 Steam 中操作。" +
-                    "合法 DLL 项目会在下载完成后的下一次游戏启动接入。");
+                    "合法 DLL 项目下载后可点“同步刷新”或在下次启动游戏时接入。");
             }
             catch (Exception ex)
             {
@@ -431,9 +646,17 @@ namespace StudentAgeModManager
             }
         }
 
-        private async void ToggleLocalPlugin(LocalPluginUnit unit)
+        private async void TogglePlugin(LocalPluginUnit unit)
         {
             if (_busy) return;
+            if (unit == null) return;
+            if (unit.Source == LocalPluginSource.SteamWorkshop)
+            {
+                await ToggleWorkshopPluginAsync(unit);
+                return;
+            }
+
+            int listScrollOffset = CurrentListScrollOffset();
             bool enabling = unit.IsDisabled;
             SetBusy(true, (enabling ? "正在启用 " : "正在禁用 ") + unit.DisplayName + " ...");
             try
@@ -443,8 +666,9 @@ namespace StudentAgeModManager
                 else
                     _localPluginManager.Disable(unit);
 
-                _localUnits = await ScanLocalPluginsAsync();
-                RenderList();
+                _localUnits = await ScanLocalPluginsAsync(_workshopDiscovery != null &&
+                    _workshopDiscovery.Succeeded ? _workshopDiscovery.Items : null);
+                RenderListAtScrollOffset(listScrollOffset);
                 SetStatus(unit.DisplayName + (enabling ? " 已启用" : " 已禁用") +
                     "（重启游戏生效）");
             }
@@ -459,6 +683,64 @@ namespace StudentAgeModManager
             }
         }
 
+        private async Task ToggleWorkshopPluginAsync(LocalPluginUnit unit)
+        {
+            int listScrollOffset = CurrentListScrollOffset();
+            bool enabling = unit.IsDisabled;
+            SetBusy(true, (enabling ? "正在启用工坊 " : "正在禁用工坊 ") +
+                unit.DisplayName + " ...");
+            try
+            {
+                string gameDir = _gameDir;
+                WorkshopToggleResult toggle = await SetWorkshopPluginEnabledAsync(
+                    unit, enabling);
+                if (toggle == null || !toggle.Succeeded)
+                    throw new InvalidOperationException(toggle?.Error ?? "工坊启用状态修改失败。");
+
+                if (toggle.Synchronization != null)
+                    WriteWorkshopRefreshLog(gameDir, toggle.Synchronization, null);
+                _workshopDiscovery = await DiscoverWorkshopItemsAsync();
+                _localUnits = await ScanLocalPluginsAsync(_workshopDiscovery != null &&
+                    _workshopDiscovery.Succeeded ? _workshopDiscovery.Items : null);
+                RenderListAtScrollOffset(listScrollOffset);
+
+                string syncWarning = toggle.Synchronization != null &&
+                    (toggle.Synchronization.ErrorCount > 0 ||
+                     !toggle.Synchronization.Synchronized)
+                    ? "；联接同步未完全成功，请查看日志"
+                    : string.Empty;
+                SetStatus(unit.DisplayName + (enabling ? " 已启用" : " 已禁用") +
+                    "；Steam 订阅与源文件保持不变" + syncWarning);
+            }
+            catch (Exception ex)
+            {
+                _workshopToggleErrorPresenter(ex.Message);
+            }
+            finally
+            {
+                SetBusy(false, null);
+            }
+        }
+
+        private async Task<WorkshopToggleResult> SetWorkshopPluginEnabledAsync(
+            LocalPluginUnit unit, bool enabled)
+        {
+            if (unit == null || unit.Source != LocalPluginSource.SteamWorkshop ||
+                string.IsNullOrWhiteSpace(unit.WorkshopId))
+                throw new InvalidOperationException("工坊插件信息无效，无法修改启用状态。");
+            if (_isGameRunning())
+                throw new InvalidOperationException("请先关闭游戏，再修改工坊启用状态。");
+            if (_installer == null || !_installer.IsBepInExInstalled() ||
+                !_installer.IsWorkshopBridgeInstalled())
+                throw new InvalidOperationException("请先安装 BepInEx 与工坊 DLL 支持。");
+            if (string.IsNullOrWhiteSpace(_gameDir))
+                throw new InvalidOperationException("无法确定当前游戏目录。");
+
+            string gameDir = _gameDir;
+            return await Task.Run(() =>
+                _workshopToggler(gameDir, unit.WorkshopId, enabled));
+        }
+
         private async Task InstallBepInExAsync()
         {
             if (_busy) return;
@@ -468,8 +750,8 @@ namespace StudentAgeModManager
                 try
                 {
                     _installer.InstallWorkshopBridge();
-                    SetStatus("工坊 DLL 支持安装完成。现有订阅不会自动开启；之后新订阅的合法 DLL 会在" +
-                        "下载完成后的下一次游戏启动自动启用。");
+                    SetStatus("工坊 DLL 支持安装完成。现有订阅不会自动开启；之后新订阅的合法 DLL " +
+                        "下载后可点“同步刷新”或在下次启动游戏时自动启用。");
                 }
                 catch (Exception ex)
                 {
@@ -484,18 +766,12 @@ namespace StudentAgeModManager
                 return;
             }
 
-            if (_index == null || _index.bepinex == null || string.IsNullOrEmpty(_index.bepinex.downloadUrl))
-            {
-                MessageBox.Show(this, "索引中没有 BepInEx 下载信息，请先点击刷新。",
-                    "无法安装", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-            SetBusy(true, "正在下载 BepInEx + 创意工坊 DLL 支持...");
+            SetBusy(true, "正在从内置包安装 BepInEx + 创意工坊 DLL 支持...");
             try
             {
-                await _installer.InstallBepInExAsync(_index.bepinex, OnProgress);
+                await _installer.InstallBepInExAsync(OnProgress);
                 SetStatus("BepInEx + 工坊 DLL 支持安装完成；现有订阅只建基线，之后新订阅的合法 DLL " +
-                    "会在下载完成后的下一次游戏启动自动启用。");
+                    "下载后可点“同步刷新”或在下次启动游戏时自动启用。");
             }
             catch (Exception ex)
             {
@@ -516,11 +792,19 @@ namespace StudentAgeModManager
             if (InvokeRequired) { BeginInvoke(new Action<int, string>(OnProgress), percent, source); return; }
             _progress.Visible = true;
             _progress.Value = Math.Max(0, Math.Min(100, percent));
-            SetStatus("下载中 " + percent + "%（源: " + source + "）");
+            SetStatus("安装中 " + percent + "%（" + source + "）");
         }
 
         private void SetBusy(bool busy, string status)
         {
+            // Disabling the focused card button makes WinForms repeatedly select the next
+            // enabled button. Because every card is then disabled in sequence, focus walks to
+            // the bottom and FlowLayoutPanel scrolls each newly focused button into view.
+            // Clear the active child before disabling cards. Keeping focus on a card lets
+            // WinForms walk it through every subsequently disabled button and scroll down.
+            if (busy && _flow.ContainsFocus)
+                ActiveControl = null;
+
             _busy = busy;
             _btnRefresh.Enabled = !busy;
             _btnInstallBep.Enabled = !busy;

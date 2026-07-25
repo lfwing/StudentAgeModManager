@@ -7,16 +7,18 @@
     <LangVersion>latest</LangVersion>
     <AssemblyName>ModManager</AssemblyName>
     <RootNamespace>StudentAgeModManager</RootNamespace>
-    <Version>1.1.1</Version>
-    <AssemblyVersion>1.1.1.0</AssemblyVersion>
-    <FileVersion>1.1.1.0</FileVersion>
+    <Version>1.2.0</Version>
+    <AssemblyVersion>1.2.0.0</AssemblyVersion>
+    <FileVersion>1.2.0.0</FileVersion>
     <Product>StudentAge Mod 管理器</Product>
     <Description>StudentAge Steam Workshop 与本地 BepInEx Mod 管理器</Description>
     <DebugType>none</DebugType>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
     <WorkshopBridgeProject>$(MSBuildProjectDirectory)\WorkshopBridge\StudentAge.WorkshopBridge.csproj</WorkshopBridgeProject>
     <WorkshopBridgeOutput>$(MSBuildProjectDirectory)\WorkshopBridge\bin\$(Configuration)\net48\StudentAge.WorkshopBridge.dll</WorkshopBridgeOutput>
+    <BepInExPackage Condition="'$(BepInExPackage)' == ''">$(MSBuildProjectDirectory)\release_assets\BepInEx-5.4.23-package.zip</BepInExPackage>
   </PropertyGroup>
 
   <!-- The bridge and its tests are independent SDK projects below this directory.
@@ -24,12 +26,20 @@
        default recursive Compile items. -->
   <ItemGroup>
     <Compile Remove="WorkshopBridge\**\*.cs;WorkshopBridge.Tests\**\*.cs;ModManager.Tests\**\*.cs" />
+    <!-- Compile the exact same synchronization core into the manager. The preloader patcher
+         remains a separately built embedded assembly, while manual refresh cannot drift to a
+         second implementation of Workshop validation or junction handling. -->
+    <Compile Include="WorkshopBridge\WorkshopBridgeSynchronizer.cs"
+             Link="Core\WorkshopBridgeSynchronizer.cs" />
+    <Compile Include="WorkshopBridge\WorkshopBridgeManagement.cs"
+             Link="Core\WorkshopBridgeManagement.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <Reference Include="System.Web.Extensions" />
     <Reference Include="System.IO.Compression" />
     <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="System.Runtime.Serialization" />
     <Reference Include="System.Security" />
   </ItemGroup>
 
@@ -42,6 +52,11 @@
                       Private="false" />
     <EmbeddedResource Include="$(WorkshopBridgeOutput)"
                       LogicalName="StudentAgeModManager.Resources.StudentAge.WorkshopBridge.dll" />
+    <!-- BepInEx is deliberately embedded as the untouched, hash-pinned base package.
+         ModManager deploys the separately embedded current Bridge afterwards, so an
+         unrelated Bridge release never requires rebuilding this third-party archive. -->
+    <EmbeddedResource Include="$(BepInExPackage)"
+                      LogicalName="StudentAgeModManager.Resources.BepInEx-5.4.23-package.zip" />
   </ItemGroup>
 
 </Project>

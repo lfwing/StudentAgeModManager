@@ -1,4 +1,5 @@
 bin/
 obj/
-release_assets/
+release_assets/*
+!release_assets/BepInEx-5.4.23-package.zip
 index_url.txt

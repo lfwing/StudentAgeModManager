@@ -20,10 +20,15 @@ $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 if (-not (Test-Path $BaseBepInExPackage -PathType Leaf)) {
     throw "Base BepInEx package not found: $BaseBepInExPackage"
 }
+$expectedBepInExHash = "D1C85CDC44F999883BF36587AD1C1DD03B149C7A9FB2700D651FFD6ED433B971"
+$actualBepInExHash = (Get-FileHash $BaseBepInExPackage -Algorithm SHA256).Hash
+if ($actualBepInExHash -ne $expectedBepInExHash) {
+    throw "Unexpected BepInEx base package hash: $actualBepInExHash"
+}
 
 Push-Location $repoRoot
 try {
-    & dotnet build "StudentAgeModManager.csproj" -c $Configuration
+    & dotnet build "StudentAgeModManager.csproj" -c $Configuration "-p:BepInExPackage=$BaseBepInExPackage"
     if ($LASTEXITCODE -ne 0) { throw "dotnet build failed with exit code $LASTEXITCODE" }
 } finally {
     Pop-Location
@@ -99,6 +104,27 @@ $managerAssembly = [Reflection.Assembly]::LoadFile($managerOutput)
 $resource = $managerAssembly.GetManifestResourceStream("StudentAgeModManager.Resources.StudentAge.WorkshopBridge.dll")
 if ($null -eq $resource) { throw "ModManager.exe does not contain the embedded Bridge resource" }
 $resource.Dispose()
+
+$resource = $managerAssembly.GetManifestResourceStream("StudentAgeModManager.Resources.BepInEx-5.4.23-package.zip")
+if ($null -eq $resource) { throw "ModManager.exe does not contain the embedded BepInEx package" }
+$sha = [Security.Cryptography.SHA256]::Create()
+try {
+    $embeddedPackageHash = [Convert]::ToBase64String($sha.ComputeHash($resource))
+} finally {
+    $sha.Dispose()
+    $resource.Dispose()
+}
+$sha = [Security.Cryptography.SHA256]::Create()
+$stream = [IO.File]::OpenRead($BaseBepInExPackage)
+try {
+    $sourcePackageHash = [Convert]::ToBase64String($sha.ComputeHash($stream))
+} finally {
+    $stream.Dispose()
+    $sha.Dispose()
+}
+if ($embeddedPackageHash -ne $sourcePackageHash) {
+    throw "Embedded BepInEx package hash mismatch"
+}
 
 Write-Host "Release assets built:" -ForegroundColor Green
 Write-Host "  $managerOutput"

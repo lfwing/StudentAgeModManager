@@ -1,22 +1,14 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace StudentAgeModManager.Core
 {
-    public enum MirrorMode
-    {
-        Auto,        // 先直连，失败走镜像
-        MirrorOnly,  // 强制镜像
-        DirectOnly,  // 强制直连
-    }
-
     /// <summary>
-    /// 带镜像回退的下载器。镜像用法：镜像前缀 + 原始完整 URL，
-    /// 如 https://ghproxy.net/https://github.com/owner/repo/releases/download/...
+    /// 仅用于读取中央文本索引：固定先直连，失败后自动尝试镜像。
+    /// 可执行前置全部内嵌在管理器中，绝不再通过此类第三方镜像下载。
     /// </summary>
     public class Downloader
     {
@@ -29,7 +21,6 @@ namespace StudentAgeModManager.Core
         };
 
         public List<string> Mirrors { get; set; } = new List<string>(SeedMirrors);
-        public MirrorMode Mode { get; set; } = MirrorMode.Auto;
         public int TimeoutSeconds { get; set; } = 15;
 
         static Downloader()
@@ -40,10 +31,9 @@ namespace StudentAgeModManager.Core
 
         private IEnumerable<string> Candidates(string url)
         {
-            if (Mode != MirrorMode.MirrorOnly) yield return url;
-            if (Mode != MirrorMode.DirectOnly)
-                foreach (var m in Mirrors)
-                    yield return m.TrimEnd('/') + "/" + url;
+            yield return url;
+            foreach (var mirror in Mirrors)
+                yield return mirror.TrimEnd('/') + "/" + url;
         }
 
         /// <summary>下载文本（用于 mods.json）。全部候选失败抛出最后一个异常。</summary>
@@ -75,58 +65,12 @@ namespace StudentAgeModManager.Core
             throw last ?? new Exception("无可用下载源");
         }
 
-        /// <summary>下载文件到临时路径，返回临时文件路径。progress: (0~100, 当前源)。</summary>
-        public async Task<string> DownloadFileAsync(string url, Action<int, string> progress,
-            CancellationToken ct = default(CancellationToken))
-        {
-            Exception last = null;
-            foreach (var candidate in Candidates(url))
-            {
-                ct.ThrowIfCancellationRequested();
-                var temp = Path.Combine(Path.GetTempPath(),
-                    "SAMM_" + Guid.NewGuid().ToString("N") + Path.GetExtension(new Uri(url).AbsolutePath));
-                try
-                {
-                    using (var wc = CreateClient())
-                    using (ct.Register(wc.CancelAsync))
-                    {
-                        string sourceLabel = ShortHost(candidate);
-                        if (progress != null)
-                            wc.DownloadProgressChanged += (s, e) => progress(e.ProgressPercentage, sourceLabel);
-
-                        var task = wc.DownloadFileTaskAsync(candidate, temp);
-                        // 大文件下载：只要有进度就不算超时 → 用首字节超时策略简化为整体 10 分钟上限
-                        if (await Task.WhenAny(task, Task.Delay(10 * 60 * 1000, ct)) != task)
-                        {
-                            wc.CancelAsync();
-                            throw new TimeoutException("下载超时: " + candidate);
-                        }
-                        await task;
-                    }
-                    var fi = new FileInfo(temp);
-                    if (!fi.Exists || fi.Length == 0) throw new IOException("下载内容为空");
-                    return temp;
-                }
-                catch (Exception ex) when (!(ex is OperationCanceledException))
-                {
-                    last = ex;
-                    try { if (File.Exists(temp)) File.Delete(temp); } catch { }
-                }
-            }
-            throw last ?? new Exception("无可用下载源");
-        }
-
         private static WebClient CreateClient()
         {
             var wc = new WebClient();
             wc.Headers[HttpRequestHeader.UserAgent] = "StudentAgeModManager/1.0";
             wc.Encoding = System.Text.Encoding.UTF8; // 默认是 ANSI(GBK)，会把 UTF-8 的 mods.json 解成乱码
             return wc;
-        }
-
-        private static string ShortHost(string url)
-        {
-            try { return new Uri(url).Host; } catch { return url; }
         }
     }
 }

@@ -34,6 +34,7 @@ namespace StudentAge.WorkshopBridge.Tests
         private static void Run(string tempRoot)
         {
             TestWorkshopLibraryDiscovery(tempRoot);
+            TestWorkshopManagement(Path.Combine(tempRoot, "management"));
             var legacyEnv = new AutoTestEnvironment(Path.Combine(tempRoot, "legacy-sync"), 32);
             var gameRoot = legacyEnv.GameRoot;
             var workshopRoot = legacyEnv.WorkshopRoot;
@@ -69,6 +70,24 @@ namespace StudentAge.WorkshopBridge.Tests
             Assert(Directory.GetFiles(pluginRoot, "Probe.dll", SearchOption.AllDirectories).Any(),
                 "BepInEx recursive scan should see DLL through the junction");
 
+            var unchanged = WorkshopBridgeSynchronizer.Synchronize(options);
+            Assert(unchanged.Synchronized && unchanged.LinkedCount == 0 &&
+                   unchanged.RemovedLinkCount == 0 && Directory.Exists(link),
+                "a second synchronization with identical state must preserve the existing " +
+                "junction without reporting filesystem changes");
+
+            var wrongTarget = Path.Combine(tempRoot, "wrong-link-target");
+            Directory.CreateDirectory(wrongTarget);
+            File.WriteAllText(Path.Combine(wrongTarget, "wrong.txt"), "wrong target");
+            Directory.Delete(link, false);
+            CreateJunction(link, wrongTarget);
+            var retargeted = WorkshopBridgeSynchronizer.Synchronize(options);
+            Assert(retargeted.Synchronized && retargeted.RemovedLinkCount == 1 &&
+                   retargeted.LinkedCount == 1 && Directory.Exists(link) &&
+                   !File.Exists(Path.Combine(link, "wrong.txt")) &&
+                   File.Exists(Path.Combine(link, "ProbeMod", "Probe.dll")),
+                "a bridge-owned junction with a changed target must be replaced exactly once");
+
             // Missing/ambiguous native state must fail closed. A stale junction may
             // belong to a different Steam user and therefore cannot remain enabled.
             File.Delete(activeList);
@@ -81,6 +100,18 @@ namespace StudentAge.WorkshopBridge.Tests
             var relinked = WorkshopBridgeSynchronizer.Synchronize(options);
             Assert(relinked.LinkedCount == 1 && Directory.Exists(link),
                 "valid native state should recreate the workshop link");
+
+            File.WriteAllText(activeList, string.Empty);
+            var explicitlyDisabled = WorkshopBridgeSynchronizer.Synchronize(options);
+            Assert(explicitlyDisabled.Synchronized && explicitlyDisabled.LinkedCount == 0 &&
+                   explicitlyDisabled.RemovedLinkCount == 1 && !Directory.Exists(link),
+                "disabling an item should remove only its existing link without recreating it");
+            File.WriteAllText(activeList, "100\r\n");
+            var enabledAgain = WorkshopBridgeSynchronizer.Synchronize(options);
+            Assert(enabledAgain.LinkedCount == 1 && enabledAgain.RemovedLinkCount == 0 &&
+                   Directory.Exists(link),
+                "re-enabling an item should create only its missing link");
+
             options.WorkshopRootPath = Path.Combine(tempRoot, "missing-workshop-root");
             var missingWorkshop = WorkshopBridgeSynchronizer.Synchronize(options);
             Assert(!missingWorkshop.Synchronized && !Directory.Exists(link),
@@ -171,6 +202,153 @@ namespace StudentAge.WorkshopBridge.Tests
             TestAutoEnableUserIsolation(Path.Combine(tempRoot, "auto-users"));
             TestAutoEnableFailClosedState(Path.Combine(tempRoot, "auto-state"));
             TestAutoEnableWriteFailureAndExistingId(Path.Combine(tempRoot, "auto-write"));
+        }
+
+        private static void TestWorkshopManagement(string root)
+        {
+            var env = new AutoTestEnvironment(root, 91);
+            CreateWorkshopDllMod(env.WorkshopRoot, "100", withMarker: true);
+            CreateWorkshopDllMod(env.WorkshopRoot, "200", withMarker: false);
+            CreateWorkshopDllMod(env.WorkshopRoot, "300", withMarker: true);
+            File.WriteAllText(env.ActiveListPath, "100\r\n100\r\ninvalid\r\n");
+            env.WriteMetadata(
+                WorkshopRecord.Current("100", env.AccountId, installed: true),
+                WorkshopRecord.Current("200", env.AccountId, installed: true),
+                new WorkshopRecord
+                {
+                    Id = "300",
+                    SubscribedBy = env.AccountId,
+                    Installed = true,
+                    Manifest = "3000001",
+                    LatestManifest = "3000002",
+                });
+
+            BridgeResult initialSync = WorkshopBridgeSynchronizer.Synchronize(env.Options);
+            string link = Path.Combine(env.PluginRoot,
+                WorkshopBridgeSynchronizer.LinkDirectoryName, "100");
+            Assert(Directory.Exists(link) && initialSync.LinkedCount == 1,
+                "management setup should start with an enabled connected Workshop DLL");
+
+            WorkshopDiscoveryResult discovery = WorkshopBridgeManagement.Discover(env.Options);
+            Assert(discovery.Succeeded && discovery.Items.Count == 3,
+                "local discovery should include every current-user subscription without a public API");
+            WorkshopManagedItem enabled = discovery.Items.Single(item => item.WorkshopId == "100");
+            Assert(enabled.IsSubscribed && enabled.IsDownloaded && enabled.IsEnabled &&
+                   enabled.IsConnected && enabled.HasBridgeManifest &&
+                   enabled.IsValidBridgePackage,
+                "a connected DLL subscription should expose complete local state");
+            WorkshopManagedItem ordinary = discovery.Items.Single(item => item.WorkshopId == "200");
+            Assert(!ordinary.HasBridgeManifest && !ordinary.IsValidBridgePackage,
+                "ordinary JSON subscriptions should be discoverable but not treated as DLL packages");
+            WorkshopManagedItem updating = discovery.Items.Single(item => item.WorkshopId == "300");
+            Assert(!updating.IsDownloaded && updating.HasBridgeManifest &&
+                   updating.IsValidBridgePackage,
+                "an updating DLL item should retain its package identity without being ready to enable");
+
+            WorkshopToggleResult disabled = WorkshopBridgeManagement.SetEnabled(
+                env.Options, "100", false);
+            Assert(disabled.Succeeded && disabled.Changed && !Directory.Exists(link),
+                "manager disable should atomically remove native enable state and reconcile the link");
+            Assert(CountActiveId(env.ActiveListPath, "100") == 0 &&
+                   File.ReadAllText(env.ActiveListPath).Contains("invalid"),
+                "disable should remove every matching ID while preserving unrelated native state");
+            Assert(StateContainsId(env.StatePath, "100"),
+                "manual disable must mark the ID seen before changing _mod");
+            string sourceDll = Path.Combine(env.WorkshopRoot, "100", "BepInEx", "plugins",
+                "ProbeMod", "Probe.dll");
+            Assert(File.Exists(sourceDll),
+                "disabling must never remove or move the Steam Workshop source DLL");
+
+            // A subscribed item continues receiving author updates while disabled. A new
+            // manifest for the same ID must not turn it back on or recreate its link.
+            File.WriteAllText(sourceDll, "updated while disabled");
+            env.WriteMetadata(
+                new WorkshopRecord
+                {
+                    Id = "100",
+                    SubscribedBy = env.AccountId,
+                    Installed = true,
+                    Manifest = "1000999",
+                    LatestManifest = "1000999",
+                },
+                WorkshopRecord.Current("200", env.AccountId, installed: true),
+                WorkshopRecord.Current("300", env.AccountId, installed: true));
+            WorkshopBridgeSynchronizer.Synchronize(env.Options);
+            Assert(CountActiveId(env.ActiveListPath, "100") == 0 && !Directory.Exists(link) &&
+                   File.ReadAllText(sourceDll) == "updated while disabled",
+                "a Workshop update must preserve manual disable while retaining updated content");
+            enabled = WorkshopBridgeManagement.Discover(env.Options).Items
+                .Single(item => item.WorkshopId == "100");
+            Assert(enabled.IsDownloaded && !enabled.IsEnabled && !enabled.IsConnected,
+                "updated disabled items should remain visible as downloaded but disabled");
+
+            WorkshopToggleResult reenabled = WorkshopBridgeManagement.SetEnabled(
+                env.Options, "100", true);
+            Assert(reenabled.Succeeded && reenabled.Changed && Directory.Exists(link) &&
+                   CountActiveId(env.ActiveListPath, "100") == 1,
+                "re-enable should use the already updated source and recreate one native ID/link");
+
+            WorkshopToggleResult ordinaryEnable = WorkshopBridgeManagement.SetEnabled(
+                env.Options, "200", true);
+            Assert(!ordinaryEnable.Succeeded && ordinaryEnable.Error.Contains("DLL 包无效"),
+                "the manager must not enable an ordinary JSON item through the DLL control");
+
+            WorkshopToggleResult updatingEnable = WorkshopBridgeManagement.SetEnabled(
+                env.Options, "300", true);
+            Assert(updatingEnable.Succeeded,
+                "a completed update should become enableable after Steam metadata converges");
+
+            env.WriteMetadata(
+                new WorkshopRecord
+                {
+                    Id = "100",
+                    SubscribedBy = env.AccountId,
+                    Installed = true,
+                    Manifest = "1000999",
+                    LatestManifest = "1001000",
+                },
+                WorkshopRecord.Current("200", env.AccountId, installed: true),
+                WorkshopRecord.Current("300", env.AccountId, installed: true));
+            WorkshopBridgeManagement.SetEnabled(env.Options, "100", false);
+            WorkshopToggleResult incompleteEnable = WorkshopBridgeManagement.SetEnabled(
+                env.Options, "100", true);
+            Assert(!incompleteEnable.Succeeded && incompleteEnable.Error.Contains("更新"),
+                "an incomplete author update must block re-enable without altering subscription files");
+            Assert(!WorkshopBridgeManagement.SetEnabled(env.Options, "00100", true).Succeeded,
+                "management operations must reject non-canonical Workshop IDs");
+
+            string expectedPluginRoot = env.Options.PluginRootPath;
+            env.Options.PluginRootPath = Path.Combine(env.GameRoot, "BepInEx", "other-plugins");
+            Assert(!WorkshopBridgeManagement.Discover(env.Options).Succeeded,
+                "management must reject a plugin root outside the current game's BepInEx/plugins path");
+            env.Options.PluginRootPath = expectedPluginRoot;
+
+            string originalMarker = env.Options.MarkerFileName;
+            env.Options.MarkerFileName = @"..\workshop-plugin.json";
+            Assert(!WorkshopBridgeManagement.Discover(env.Options).Succeeded,
+                "management must reject a marker name that can escape a Workshop item root");
+            env.Options.MarkerFileName = originalMarker;
+
+            var reparseEnv = new AutoTestEnvironment(Path.Combine(root, "reparse-plugin-root"), 92);
+            File.WriteAllText(reparseEnv.ActiveListPath, string.Empty);
+            reparseEnv.WriteMetadata();
+            Directory.Delete(reparseEnv.PluginRoot, false);
+            string externalPluginTarget = Path.Combine(root, "external-plugin-target");
+            Directory.CreateDirectory(externalPluginTarget);
+            File.WriteAllText(Path.Combine(externalPluginTarget, "keep.txt"), "do not touch");
+            CreateJunction(reparseEnv.PluginRoot, externalPluginTarget);
+            try
+            {
+                Assert(!WorkshopBridgeManagement.Discover(reparseEnv.Options).Succeeded,
+                    "management must reject a reparse-point BepInEx/plugins root before changing state");
+                Assert(File.Exists(Path.Combine(externalPluginTarget, "keep.txt")),
+                    "plugin-root validation must not mutate the reparse-point target");
+            }
+            finally
+            {
+                if (Directory.Exists(reparseEnv.PluginRoot))
+                    Directory.Delete(reparseEnv.PluginRoot, false);
+            }
         }
 
         private static void TestAutoEnableLifecycle(string root)
