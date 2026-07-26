@@ -24,13 +24,13 @@
 		{
 			"id": "white12666-studentage-editor-plus",
 			"name": "学生时代官方编辑器Plus",
-			"description": "增强游戏自带 Mod 编辑器：剧情图可视化编辑、保存校验等十余项修复；普通玩家无需安装",
+			"description": "增强游戏自带 Mod 编辑器：剧情图可视化编辑、预览图片、搜索等十余项功能增强；只需Mod作者安装",
 			"workshopId": "3771362794"
 		},
 		{
 			"id": "white12666-studentage-social-role-runtime",
 			"name": "学生时代可社交角色前置",
-			"description": "让自定义社交资料按剧情进度显示并修复相关崩溃；所玩作品要求时安装",
+			"description": "让自定义社交资料按剧情进度显示；所玩作品要求时安装",
 			"workshopId": "3771362749"
 		}
 	]
