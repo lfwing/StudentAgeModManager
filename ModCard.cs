@@ -71,8 +71,9 @@ namespace StudentAgeModManager
             _desc.Font = CardFont;
             _desc.ForeColor = Color.FromArgb(90, 90, 90);
             _desc.Location = new Point(13, 34);
+            // 高度由 UpdateDescriptionLayout 按实际行数决定；AutoEllipsis 会强制单行，因此不使用。
             _desc.Size = new Size(534, 20);
-            _desc.AutoEllipsis = true;
+            _desc.AutoEllipsis = false;
 
             SetupButton(_btnMain, 12, 120);
             SetupButton(_btnToggle, 12, 84);
@@ -139,7 +140,25 @@ namespace StudentAgeModManager
                 ApplyWorkshopIndexState();
             else if (_boundKind == BoundKind.LocalPlugin)
                 ApplyLocalPluginState();
+            UpdateDescriptionLayout();
             ApplyBusyState();
+        }
+
+        /// <summary>简介一行放不下时自动换行，按钮和卡片高度跟随实际行数下移。</summary>
+        private void UpdateDescriptionLayout()
+        {
+            int lineHeight = TextRenderer.MeasureText("测", CardFont).Height;
+            int textHeight = string.IsNullOrEmpty(_desc.Text)
+                ? lineHeight
+                : TextRenderer.MeasureText(_desc.Text, CardFont,
+                    new Size(_desc.Width, int.MaxValue), TextFormatFlags.WordBreak).Height;
+            int lines = Math.Max(1, Math.Min(3,
+                (textHeight + lineHeight - 1) / lineHeight));
+            _desc.Height = lines * lineHeight + 3;
+            int buttonTop = _desc.Bottom + 6;
+            _btnMain.Top = buttonTop;
+            _btnToggle.Top = buttonTop;
+            Height = buttonTop + _btnMain.Height + 9;
         }
 
         private void ApplyWorkshopIndexState()
@@ -229,14 +248,14 @@ namespace StudentAgeModManager
 
         private static string BuildWorkshopDescription(LocalPluginUnit unit, string workshopId)
         {
+            // 订阅与下载情况已由右上角状态表达，这里只保留排查用的版本号和 ID。
             string version = unit.Plugins.Count > 0
                 ? "版本 " + (unit.DisplayVersion ?? "未知") + " · "
                 : string.Empty;
-            string download = unit.IsWorkshopDownloaded ? "已下载" : "正在下载/更新";
             string detail = string.IsNullOrWhiteSpace(unit.WorkshopValidationError)
                 ? string.Empty
                 : " · " + unit.WorkshopValidationError;
-            return version + "ID " + workshopId + " · 已订阅 · " + download + detail;
+            return version + "ID " + workshopId + detail;
         }
 
         private void ApplyWorkshopStatus(LocalPluginUnit unit, bool registered)

@@ -1903,14 +1903,29 @@ namespace StudentAgeModManager.Tests
                     "an indexed and connected Workshop item should be represented by one merged card");
                 Assert(IsPositive(registration.ForeColor) && IsPositive(state.ForeColor),
                     "已收录 and 已启用 should both be green");
-                Assert(description.Text.Contains("2.0.0") &&
+                Assert(description.Text.Contains("Steam-managed entry") &&
+                        description.Text.Contains("2.0.0") &&
                         description.Text.Contains("ID 1234") &&
-                        description.Text.Contains("已订阅") &&
-                        description.Text.Contains("已下载"),
-                    "merged Workshop cards should include version, ID, subscription, and download state");
+                        !description.Text.Contains("已订阅") &&
+                        !description.Text.Contains("已下载"),
+                    "merged Workshop cards should keep the index description plus version and ID, " +
+                    "without repeating the status labels");
                 Assert(main.Text == "打开工坊页面" && toggle.Visible && toggle.Enabled &&
                        toggle.Text == "禁用" && main.Right <= toggle.Left,
                     "merged Workshop cards should expose non-overlapping page and disable actions");
+
+                int compactHeight = card.Height;
+                Assert(main.Top >= description.Bottom,
+                    "buttons must sit below the description area");
+                workshopEntry.description = string.Concat(
+                    Enumerable.Repeat("这是一段足够长的简介，用来验证描述自动换行。", 4));
+                card.Bind(workshopEntry, installedWorkshop);
+                Assert(card.Height > compactHeight && main.Top >= description.Bottom,
+                    "long descriptions should wrap and grow the card instead of being cut off");
+                workshopEntry.description = "Steam-managed entry";
+                card.Bind(workshopEntry, installedWorkshop);
+                Assert(card.Height == compactHeight,
+                    "short descriptions should restore the compact card height");
 
                 installedWorkshop.IsDisabled = true;
                 installedWorkshop.IsWorkshopConnected = false;
