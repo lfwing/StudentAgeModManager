@@ -1,6 +1,6 @@
 {
 	"schemaVersion": 1,
-	"updatedAt": "2026-07-25",
+	"updatedAt": "2026-07-26",
 	"mirrors": [
 		"https://ghproxy.net/",
 		"https://gh-proxy.com/",
@@ -23,14 +23,14 @@
 		},
 		{
 			"id": "white12666-studentage-editor-plus",
-			"name": "StudentAgeEditorPlus（作者端编辑器增强）",
-			"description": "面向 Mod 作者的原生编辑器增强工具，提供剧情图、保存校验及可社交角色资料编辑",
+			"name": "学生时代官方编辑器Plus",
+			"description": "增强游戏自带 Mod 编辑器：剧情图可视化编辑、保存校验等十余项修复；普通玩家无需安装",
 			"workshopId": "3771362794"
 		},
 		{
 			"id": "white12666-studentage-social-role-runtime",
-			"name": "StudentAgeSocialRoleRuntime（可社交角色前置）",
-			"description": "为扩展社交资料提供资料阶段显示、数组防护和旧档空生日修复",
+			"name": "学生时代可社交角色前置",
+			"description": "让自定义社交资料按剧情进度显示并修复相关崩溃；所玩作品要求时安装",
 			"workshopId": "3771362749"
 		}
 	]

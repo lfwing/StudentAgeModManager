@@ -151,7 +151,11 @@ namespace StudentAgeModManager
 
             if (discovered)
             {
-                _desc.Text = BuildWorkshopDescription(LocalUnit, workshopId);
+                // 已安装时也保留索引简介，只在其后追加本地状态，避免收录简介被技术信息完全顶掉。
+                string detail = BuildWorkshopDescription(LocalUnit, workshopId);
+                _desc.Text = string.IsNullOrWhiteSpace(Entry.description)
+                    ? detail
+                    : Entry.description + " · " + detail;
                 ApplyWorkshopStatus(LocalUnit, true);
             }
             else
