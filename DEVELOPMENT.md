@@ -41,7 +41,7 @@ BepInEx 5.4.23 基础 ZIP 和 Bridge 均以资源嵌入 `ModManager.exe`。基�
 提供首次安装兼容，新版不得重新依赖该字段。
 
 `WorkshopBridgeSynchronizer.cs` 与 `WorkshopBridgeManagement.cs` 同时编入 Bridge 和 Mod
-Manager。游戏启动时由 Preloader 调用同步核心；游戏关闭时，管理器的“同步刷新”和工坊
+Manager。游戏启动时由 Preloader 调用同步核心；游戏关闭时，管理器的“刷新”和工坊
 开关也调用同一实现，然后重新发现、扫描并渲染。不要在管理器中复制一套简化规则；游戏
 运行期间必须跳过手动同步和工坊状态写入。
 

@@ -47,7 +47,7 @@ namespace StudentAgeModManager.Core
         {
             if (unit.Source != LocalPluginSource.Local)
                 throw new InvalidOperationException(
-                    "Steam 工坊插件请在游戏“本地”页管理，管理器不会移动工坊联接。");
+                    "Steam 工坊 Mod 请使用工坊开关或游戏“本地”页管理，管理器不会移动其文件。");
         }
 
         private static string ResolveImmediateChild(string expectedRoot, string relativePath)
@@ -70,7 +70,7 @@ namespace StudentAgeModManager.Core
             if (!sourceExists)
                 throw new FileNotFoundException("插件不存在或已被移动。", source);
             if (IsReparsePoint(source))
-                throw new InvalidDataException("拒绝移动重解析点；工坊联接必须由 Bridge 管理。");
+                throw new InvalidDataException("该目录由工坊同步管理，管理器不会移动它。");
             if (Directory.Exists(target) || File.Exists(target))
                 throw new IOException("目标位置已存在同名插件，未执行覆盖: " + target);
 

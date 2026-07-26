@@ -12,6 +12,8 @@ namespace StudentAgeModManager
         private static readonly Color SourceColor = Color.RoyalBlue;
         private static readonly Color PositiveColor = Color.FromArgb(45, 135, 70);
         private static readonly Color NegativeColor = Color.Firebrick;
+        // 未收录只表示不在推荐列表，不是异常，用中性灰而不是红色。
+        private static readonly Color NeutralColor = Color.FromArgb(130, 130, 130);
         private static readonly Font TitleFont =
             new Font("Microsoft YaHei UI", 10.5f, FontStyle.Bold);
         private static readonly Font CardFont = new Font("Microsoft YaHei UI", 9f);
@@ -159,7 +161,7 @@ namespace StudentAgeModManager
                     : Entry.description;
                 if (valid)
                     SetStatus("Steam 工坊", SourceColor,
-                        "已收录", PositiveColor, "未接入", NegativeColor);
+                        "已收录", PositiveColor, "未启用", NegativeColor);
                 else
                     SetStatus("Steam 工坊", SourceColor,
                         "信息无效", NegativeColor, null, NegativeColor);
@@ -198,14 +200,14 @@ namespace StudentAgeModManager
             if (unit.HasPathConflict)
             {
                 SetStatus("本地", SourceColor,
-                    "未收录", NegativeColor, "路径冲突", Color.DarkOrange);
+                    "未收录", NeutralColor, "路径冲突", Color.DarkOrange);
                 return;
             }
 
             if (unit.HasGuidConflict)
             {
                 SetStatus("本地", SourceColor,
-                    "未收录", NegativeColor, "重复 GUID", Color.DarkOrange);
+                    "未收录", NeutralColor, "重复 GUID", Color.DarkOrange);
                 _btnToggle.Visible = true;
                 _btnToggle.Enabled = true;
                 _btnToggle.Text = unit.IsDisabled ? "启用" : "禁用";
@@ -213,7 +215,7 @@ namespace StudentAgeModManager
             }
 
             SetStatus("本地", SourceColor,
-                "未收录", NegativeColor,
+                "未收录", NeutralColor,
                 unit.IsDisabled ? "未启用" : "已启用",
                 unit.IsDisabled ? NegativeColor : PositiveColor);
             _btnToggle.Visible = true;
@@ -226,7 +228,7 @@ namespace StudentAgeModManager
             string version = unit.Plugins.Count > 0
                 ? "版本 " + (unit.DisplayVersion ?? "未知") + " · "
                 : string.Empty;
-            string download = unit.IsWorkshopDownloaded ? "已下载" : "下载中/更新中";
+            string download = unit.IsWorkshopDownloaded ? "已下载" : "正在下载/更新";
             string detail = string.IsNullOrWhiteSpace(unit.WorkshopValidationError)
                 ? string.Empty
                 : " · " + unit.WorkshopValidationError;
@@ -244,12 +246,12 @@ namespace StudentAgeModManager
             }
             else if (!unit.HasWorkshopManifest)
             {
-                state = "声明缺失";
+                state = "缺少描述文件";
                 stateColor = NegativeColor;
             }
             else if (!unit.IsWorkshopPackageValid)
             {
-                state = "包无效";
+                state = "文件不完整";
                 stateColor = NegativeColor;
             }
             else if (unit.IsDisabled)
@@ -259,23 +261,23 @@ namespace StudentAgeModManager
             }
             else if (!unit.IsWorkshopDownloaded)
             {
-                state = "更新中";
+                state = "下载中";
                 stateColor = Color.DarkOrange;
             }
             else if (unit.IsWorkshopConnected)
             {
-                state = "已接入";
+                state = "已启用";
                 stateColor = PositiveColor;
             }
             else
             {
-                state = "待同步";
+                state = "待刷新";
                 stateColor = Color.DarkOrange;
             }
 
             SetStatus("Steam 工坊", SourceColor,
                 registered ? "已收录" : "未收录",
-                registered ? PositiveColor : NegativeColor, state, stateColor);
+                registered ? PositiveColor : NeutralColor, state, stateColor);
         }
 
         private void ConfigureWorkshopToggle(LocalPluginUnit unit)

@@ -1305,17 +1305,17 @@ namespace StudentAgeModManager.Tests
                     "workshop guide should keep the original first-use heading");
                 Assert(setupText.Text.Contains("点击“一键安装完整前置”") &&
                        setupText.Text.Contains("内置包") &&
-                       setupText.Text.Contains("无需联网") &&
-                       setupText.Text.Contains("中央索引只是推荐目录") &&
-                       setupText.Text.Contains("不是加载白名单"),
-                    "first-use text should explain offline setup and the optional index");
-                Assert(setupText.Text.Contains("任何合法工坊 DLL 均可接入") &&
-                       setupText.Text.Contains("同步刷新") &&
+                       setupText.Text.Contains("无需联网"),
+                    "first-use text should explain offline setup");
+                Assert(setupText.Text.Contains("点“刷新”") &&
                        setupText.Text.Contains("下次启动游戏时自动启用") &&
-                       !setupText.Text.Contains("“收录”只表示进入推荐目录"),
-                    "first-use text should explain both manual synchronization and startup sync");
-                Assert(refresh.Text == "同步刷新",
-                    "the refresh button should disclose that it also synchronizes Workshop links");
+                       !setupText.Text.Contains("中央索引") &&
+                       !setupText.Text.Contains("白名单") &&
+                       !setupText.Text.Contains("合法"),
+                    "first-use text should explain both manual refresh and startup sync " +
+                    "without internal jargon");
+                Assert(refresh.Text == "刷新",
+                    "the refresh button should use the plain player-facing label");
                 Assert(typeof(MainForm).GetField("_cmbMirror",
                            BindingFlags.Instance | BindingFlags.NonPublic) == null &&
                        !form.Controls.OfType<ComboBox>().Any(),
@@ -1329,16 +1329,13 @@ namespace StudentAgeModManager.Tests
                     "a mirrored text index must not control the executable update destination");
                 Assert(manageTitle.Text == "如何管理 Mod" && manageTitle.Font.Bold,
                     "workshop guide should use a clear management heading");
-                Assert(manageText.Text.Contains("订阅/取消在 Steam") &&
-                       manageText.Text.Contains("可在下方") &&
-                       manageText.Text.Contains("游戏“本地”页") &&
-                       manageText.Text.Contains("未收录工坊也会显示") &&
-                       manageText.Text.Contains("禁用仍接收更新"),
+                Assert(manageText.Text.Contains("订阅和取消订阅请在 Steam 中操作") &&
+                       manageText.Text.Contains("可在下方列表") &&
+                       manageText.Text.Contains("游戏内“本地”页") &&
+                       manageText.Text.Contains("不在推荐列表中的工坊 Mod 也能正常使用") &&
+                       manageText.Text.Contains("已禁用的 Mod 仍会随 Steam 更新"),
                     "management text should explain both toggle surfaces, local visibility, and updates");
-                Assert(manageText.Text.Contains("手动 DLL") &&
-                       manageText.Text.Contains("本地 · 未收录"),
-                    "management text should distinguish manually installed local plugins");
-                Assert(submissionLink.Text.Contains("“收录”只表示进入 Git 推荐目录") &&
+                Assert(submissionLink.Text.Contains("“已收录”表示 Mod 已进入官方推荐列表") &&
                        submissionLink.Text.Contains("可自定义显示名称与简介") &&
                        submissionLink.Text.Contains("欢迎 Mod 作者") &&
                        submissionLink.Text.Contains("GitHub 提交收录"),
@@ -1585,7 +1582,7 @@ namespace StudentAgeModManager.Tests
                 ModCard merged = cards.Single(card =>
                     card.Entry != null && card.Entry.id == "listed-connected");
                 Assert(ReferenceEquals(merged.LocalUnit, connected) &&
-                       merged.StatusText == "Steam 工坊 · 已收录 · 已接入",
+                       merged.StatusText == "Steam 工坊 · 已收录 · 已启用",
                     "RenderList should merge an indexed item with its matching Workshop unit by ID; " +
                     "sameUnit=" + ReferenceEquals(merged.LocalUnit, connected) +
                     ", status=" + merged.StatusText);
@@ -1856,10 +1853,10 @@ namespace StudentAgeModManager.Tests
                 workshopEntry.name = "Workshop Test";
                 workshopEntry.description = "Steam-managed entry";
                 card.Bind(workshopEntry);
-                Assert(card.StatusText == "Steam 工坊 · 已收录 · 未接入",
+                Assert(card.StatusText == "Steam 工坊 · 已收录 · 未启用",
                     "an indexed Workshop item without a Bridge link should use concise status text");
                 Assert(IsPositive(registration.ForeColor) && IsNegative(state.ForeColor),
-                    "已收录 should be green while 未接入 should be red");
+                    "已收录 should be green while 未启用 should be red");
                 Assert(source.Left >= 0 && source.Right <= registration.Left &&
                        registration.Right <= state.Left &&
                        state.Right <= statusPanel.ClientSize.Width,
@@ -1902,10 +1899,10 @@ namespace StudentAgeModManager.Tests
                     },
                 };
                 card.Bind(workshopEntry, installedWorkshop);
-                Assert(card.StatusText == "Steam 工坊 · 已收录 · 已接入",
+                Assert(card.StatusText == "Steam 工坊 · 已收录 · 已启用",
                     "an indexed and connected Workshop item should be represented by one merged card");
                 Assert(IsPositive(registration.ForeColor) && IsPositive(state.ForeColor),
-                    "已收录 and 已接入 should both be green");
+                    "已收录 and 已启用 should both be green");
                 Assert(description.Text.Contains("2.0.0") &&
                         description.Text.Contains("ID 1234") &&
                         description.Text.Contains("已订阅") &&
@@ -1964,8 +1961,8 @@ namespace StudentAgeModManager.Tests
                 card.BindLocal(localUnit);
                 Assert(card.StatusText == "本地 · 未收录 · 已启用",
                     "enabled local plugins should use concise source and state text");
-                Assert(IsNegative(registration.ForeColor) && IsPositive(state.ForeColor),
-                    "未收录 should be red while 已启用 should be green");
+                Assert(IsNeutral(registration.ForeColor) && IsPositive(state.ForeColor),
+                    "未收录 should be neutral gray while 已启用 should be green");
                 Assert(description.Text.Contains("1.2.3") &&
                        description.Text.Contains("BepInEx\\plugins\\LocalExample"),
                     "local cards should display version and path");
@@ -1986,8 +1983,8 @@ namespace StudentAgeModManager.Tests
                 card.BindLocal(localUnit);
                 Assert(card.StatusText == "本地 · 未收录 · 未启用" && toggle.Text == "启用",
                     "disabled local plugins should use the red 未启用 state");
-                Assert(IsNegative(registration.ForeColor) && IsNegative(state.ForeColor),
-                    "both 未收录 and 未启用 should be red");
+                Assert(IsNeutral(registration.ForeColor) && IsNegative(state.ForeColor),
+                    "未收录 should be neutral gray while 未启用 should be red");
 
                 localUnit.HasPathConflict = true;
                 card.BindLocal(localUnit);
@@ -2031,10 +2028,10 @@ namespace StudentAgeModManager.Tests
                 var state = GetCardLabel(card, "_statusState");
                 var main = GetButton(card, "_btnMain");
                 var toggle = GetButton(card, "_btnToggle");
-                Assert(card.StatusText == "Steam 工坊 · 未收录 · 已接入",
+                Assert(card.StatusText == "Steam 工坊 · 未收录 · 已启用",
                     "unindexed connected Workshop plugins should use the requested concise status");
-                Assert(IsNegative(registration.ForeColor) && IsPositive(state.ForeColor),
-                    "未收录 should be red while 已接入 should be green");
+                Assert(IsNeutral(registration.ForeColor) && IsPositive(state.ForeColor),
+                    "未收录 should be neutral gray while 已启用 should be green");
                 Assert(main.Visible && main.Enabled && main.Text == "打开工坊页面" &&
                        toggle.Visible && toggle.Enabled && toggle.Text == "禁用",
                     "unindexed Workshop items should expose page and disable actions");
@@ -2049,6 +2046,11 @@ namespace StudentAgeModManager.Tests
         private static bool IsNegative(Color color)
         {
             return color.ToArgb() == Color.Firebrick.ToArgb();
+        }
+
+        private static bool IsNeutral(Color color)
+        {
+            return color.ToArgb() == Color.FromArgb(130, 130, 130).ToArgb();
         }
 
 

@@ -101,7 +101,7 @@ namespace StudentAgeModManager
             _lblBepInEx.Size = new Size(500, 22);
             _lblBepInEx.AutoEllipsis = true;
 
-            _btnRefresh.Text = "同步刷新";
+            _btnRefresh.Text = "刷新";
             _btnRefresh.Location = new Point(531, 30);
             _btnRefresh.Size = new Size(75, 26);
             _btnRefresh.Click += async (s, e) => await RefreshIndexAsync(true);
@@ -119,8 +119,8 @@ namespace StudentAgeModManager
             _workshopSetupText.Size = new Size(592, 36);
             _workshopSetupText.ForeColor = Color.FromArgb(35, 78, 121);
             _workshopSetupText.Text =
-                "点击“一键安装完整前置”（内置包，无需联网）。中央索引只是推荐目录，不是加载白名单；\r\n" +
-                "任何合法工坊 DLL 均可接入；新订阅下载后点“同步刷新”或下次启动游戏时自动启用。";
+                "点击“一键安装完整前置”即可完成安装（内置包，无需联网）。之后在 Steam 创意工坊订阅 Mod，\r\n" +
+                "下载完成后点“刷新”，或下次启动游戏时自动启用。";
 
             _workshopManageTitle.Location = new Point(14, 68);
             _workshopManageTitle.Size = new Size(592, 19);
@@ -131,8 +131,8 @@ namespace StudentAgeModManager
             _workshopManageText.Size = new Size(592, 36);
             _workshopManageText.ForeColor = Color.FromArgb(35, 78, 121);
             _workshopManageText.Text =
-                "工坊订阅/取消在 Steam；游戏关闭时，可在下方或游戏“本地”页开关。\r\n" +
-                "未收录工坊也会显示；禁用仍接收更新。手动 DLL 显示为“本地 · 未收录”。";
+                "订阅和取消订阅请在 Steam 中操作；游戏关闭时，可在下方列表或游戏内“本地”页开关 Mod。\r\n" +
+                "不在推荐列表中的工坊 Mod 也能正常使用；已禁用的 Mod 仍会随 Steam 更新。";
 
             _workshopGuide.Controls.AddRange(new Control[]
             {
@@ -145,7 +145,7 @@ namespace StudentAgeModManager
             _banner.Size = new Size(620, 34);
             _banner.BackColor = Color.FromArgb(255, 243, 205);
             _banner.Visible = false;
-            _bannerText.Text = "未检测到 BepInEx 前置与创意工坊 DLL 支持。";
+            _bannerText.Text = "未检测到运行 Mod 所需的前置组件。";
             _bannerText.Location = new Point(14, 8);
             _bannerText.AutoSize = true;
             _bannerText.ForeColor = Color.FromArgb(133, 100, 4);
@@ -168,7 +168,7 @@ namespace StudentAgeModManager
             _submissionFooter.Size = new Size(620, 24);
             _submissionFooter.BackColor = Color.FromArgb(238, 240, 244);
             const string submissionText =
-                "“收录”只表示进入 Git 推荐目录，可自定义显示名称与简介。欢迎 Mod 作者在 GitHub 提交收录。";
+                "“已收录”表示 Mod 已进入官方推荐列表，可自定义显示名称与简介。欢迎 Mod 作者在 GitHub 提交收录。";
             const string submissionLinkText = "GitHub 提交收录";
             _workshopSubmissionLink.Text = submissionText;
             _workshopSubmissionLink.Location = new Point(14, 3);
@@ -239,21 +239,21 @@ namespace StudentAgeModManager
             bool bridgeCurrent = bepinExInstalled && _installer.IsWorkshopBridgeCurrent();
             if (!bepinExInstalled)
             {
-                _lblBepInEx.Text = "✘ 未安装 BepInEx + 工坊 DLL 支持";
+                _lblBepInEx.Text = "✘ 未安装 BepInEx 与工坊 Mod 支持";
                 _lblBepInEx.ForeColor = Color.Firebrick;
-                _bannerText.Text = "未检测到 BepInEx 前置与创意工坊 DLL 支持。";
+                _bannerText.Text = "未检测到运行 Mod 所需的前置组件。";
                 _btnInstallBep.Text = "一键安装完整前置";
             }
             else if (!bridgeCurrent)
             {
-                _lblBepInEx.Text = "⚠ 工坊 DLL 支持缺失或需更新";
+                _lblBepInEx.Text = "⚠ 工坊 Mod 支持缺失或需更新";
                 _lblBepInEx.ForeColor = Color.DarkOrange;
-                _bannerText.Text = "新订阅 DLL：下载后点“同步刷新”或下次启动自动启用。";
-                _btnInstallBep.Text = "安装工坊 DLL 支持";
+                _bannerText.Text = "工坊 Mod 支持组件缺失或需更新，请点右侧按钮安装。";
+                _btnInstallBep.Text = "安装工坊 Mod 支持";
             }
             else
             {
-                _lblBepInEx.Text = "✔ BepInEx + 工坊 DLL 支持已安装";
+                _lblBepInEx.Text = "✔ BepInEx 与工坊 Mod 支持已安装";
                 _lblBepInEx.ForeColor = Color.Green;
             }
             bool showBanner = !bepinExInstalled || !bridgeCurrent;
@@ -271,8 +271,8 @@ namespace StudentAgeModManager
             if (_busy) return;
             int listScrollOffset = CurrentListScrollOffset();
             SetBusy(true, synchronizeWorkshop
-                ? "正在同步工坊并刷新列表..."
-                : "正在获取工坊列表并扫描本地插件...");
+                ? "正在同步工坊并刷新列表…"
+                : "正在获取工坊列表并扫描本地插件…");
             Task<WorkshopRefreshOutcome> workshopSync =
                 SynchronizeWorkshopForRefreshAsync(synchronizeWorkshop);
             // Manual refresh discovers state only after synchronization; startup discovery can
@@ -307,19 +307,19 @@ namespace StudentAgeModManager
                 if (indexError == null)
                 {
                     CheckSelfUpdate();
-                    SetStatus(workshopNote + "列表已更新（" + _index.mods.Count + " 个工坊条目，" +
-                        _localPluginCount + " 个已安装插件单元，索引更新于 " +
+                    SetStatus(workshopNote + "列表已更新（工坊 Mod " + _index.mods.Count +
+                        " 个，已安装 Mod " + _localPluginCount + " 个，推荐列表更新于 " +
                         (_index.updatedAt ?? "?") + "）");
                 }
                 else
                 {
-                    string previousNote = keptPreviousIndex ? "保留上次工坊目录；" : string.Empty;
+                    string previousNote = keptPreviousIndex ? "保留上次推荐列表；" : string.Empty;
                     SetStatus(workshopNote + "工坊列表获取失败；" + previousNote + "已显示 " +
-                        _localPluginCount + " 个本地插件单元。" + indexError.Message);
+                        _localPluginCount + " 个已安装 Mod。" + indexError.Message);
                     MessageBox.Show(this,
                         "无法获取工坊列表，" +
-                        (keptPreviousIndex ? "当前保留上次目录；" : string.Empty) +
-                        "本地插件仍可管理。\n\n" + indexError.Message,
+                        (keptPreviousIndex ? "当前保留上次列表；" : string.Empty) +
+                        "已安装的 Mod 仍可管理。\n\n" + indexError.Message,
                         "网络错误", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
             }
@@ -411,13 +411,13 @@ namespace StudentAgeModManager
 
             var changes = new List<string>();
             if (result.BaselineIdCount > 0)
-                changes.Add("建立基线 " + result.BaselineIdCount);
+                changes.Add("已记录现有订阅 " + result.BaselineIdCount + " 个");
             if (result.AutoEnabledIdCount > 0)
-                changes.Add("自动启用 " + result.AutoEnabledIdCount);
+                changes.Add("自动启用 " + result.AutoEnabledIdCount + " 个");
             if (result.LinkedCount > 0)
-                changes.Add("新增联接 " + result.LinkedCount);
+                changes.Add("新启用 " + result.LinkedCount + " 个");
             if (result.RemovedLinkCount > 0)
-                changes.Add("移除联接 " + result.RemovedLinkCount);
+                changes.Add("清理失效 " + result.RemovedLinkCount + " 个");
             return changes.Count == 0
                 ? "工坊已同步；"
                 : "工坊已同步（" + string.Join("，", changes) + "）；";
@@ -566,7 +566,7 @@ namespace StudentAgeModManager
             }
 
             if (!hasWorkshopSection && localPluginUnits.Count == 0)
-                _flow.Controls.Add(CreateSectionLabel("未发现工坊目录条目或本地 BepInEx 插件。"));
+                _flow.Controls.Add(CreateSectionLabel("未发现工坊 Mod 或本地插件。"));
             _flow.ResumeLayout(true);
             RestoreListScrollOffset(requestedScrollOffset);
         }
@@ -634,10 +634,9 @@ namespace StudentAgeModManager
             {
                 WorkshopPageTarget target = _workshopPageLauncher.Open(workshopId);
                 SetStatus((target == WorkshopPageTarget.SteamClient
-                        ? "已在 Steam 客户端打开工坊页面；"
-                        : "已在浏览器打开工坊页面；") +
-                    "订阅或取消订阅请在 Steam 中操作。" +
-                    "合法 DLL 项目下载后可点“同步刷新”或在下次启动游戏时接入。");
+                        ? "已在 Steam 客户端打开工坊页面。"
+                        : "已在浏览器打开工坊页面。") +
+                    "订阅后待下载完成，点“刷新”即可启用。");
             }
             catch (Exception ex)
             {
@@ -658,7 +657,7 @@ namespace StudentAgeModManager
 
             int listScrollOffset = CurrentListScrollOffset();
             bool enabling = unit.IsDisabled;
-            SetBusy(true, (enabling ? "正在启用 " : "正在禁用 ") + unit.DisplayName + " ...");
+            SetBusy(true, (enabling ? "正在启用 " : "正在禁用 ") + unit.DisplayName + "…");
             try
             {
                 if (enabling)
@@ -687,8 +686,8 @@ namespace StudentAgeModManager
         {
             int listScrollOffset = CurrentListScrollOffset();
             bool enabling = unit.IsDisabled;
-            SetBusy(true, (enabling ? "正在启用工坊 " : "正在禁用工坊 ") +
-                unit.DisplayName + " ...");
+            SetBusy(true, (enabling ? "正在启用工坊 Mod " : "正在禁用工坊 Mod ") +
+                unit.DisplayName + "…");
             try
             {
                 string gameDir = _gameDir;
@@ -707,10 +706,10 @@ namespace StudentAgeModManager
                 string syncWarning = toggle.Synchronization != null &&
                     (toggle.Synchronization.ErrorCount > 0 ||
                      !toggle.Synchronization.Synchronized)
-                    ? "；联接同步未完全成功，请查看日志"
+                    ? "；同步未完全成功，请查看日志"
                     : string.Empty;
                 SetStatus(unit.DisplayName + (enabling ? " 已启用" : " 已禁用") +
-                    "；Steam 订阅与源文件保持不变" + syncWarning);
+                    "（不影响 Steam 订阅和已下载文件）" + syncWarning);
             }
             catch (Exception ex)
             {
@@ -732,7 +731,7 @@ namespace StudentAgeModManager
                 throw new InvalidOperationException("请先关闭游戏，再修改工坊启用状态。");
             if (_installer == null || !_installer.IsBepInExInstalled() ||
                 !_installer.IsWorkshopBridgeInstalled())
-                throw new InvalidOperationException("请先安装 BepInEx 与工坊 DLL 支持。");
+                throw new InvalidOperationException("请先安装 BepInEx 与工坊 Mod 支持。");
             if (string.IsNullOrWhiteSpace(_gameDir))
                 throw new InvalidOperationException("无法确定当前游戏目录。");
 
@@ -746,16 +745,16 @@ namespace StudentAgeModManager
             if (_busy) return;
             if (_installer.IsBepInExInstalled())
             {
-                SetBusy(true, "正在安装创意工坊 DLL 支持...");
+                SetBusy(true, "正在安装工坊 Mod 支持…");
                 try
                 {
                     _installer.InstallWorkshopBridge();
-                    SetStatus("工坊 DLL 支持安装完成。现有订阅不会自动开启；之后新订阅的合法 DLL " +
-                        "下载后可点“同步刷新”或在下次启动游戏时自动启用。");
+                    SetStatus("工坊 Mod 支持安装完成。已有订阅不会被自动开启；" +
+                        "新订阅的 Mod 下载完成后点“刷新”，或下次启动游戏时自动启用。");
                 }
                 catch (Exception ex)
                 {
-                    SetStatus("创意工坊 DLL 支持安装失败: " + ex.Message);
+                    SetStatus("工坊 Mod 支持安装失败: " + ex.Message);
                     MessageBox.Show(this, ex.Message, "安装失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
                 finally
@@ -766,12 +765,12 @@ namespace StudentAgeModManager
                 return;
             }
 
-            SetBusy(true, "正在从内置包安装 BepInEx + 创意工坊 DLL 支持...");
+            SetBusy(true, "正在从内置包安装 BepInEx 与工坊 Mod 支持…");
             try
             {
                 await _installer.InstallBepInExAsync(OnProgress);
-                SetStatus("BepInEx + 工坊 DLL 支持安装完成；现有订阅只建基线，之后新订阅的合法 DLL " +
-                    "下载后可点“同步刷新”或在下次启动游戏时自动启用。");
+                SetStatus("BepInEx 与工坊 Mod 支持安装完成。已有订阅不会被自动开启；" +
+                    "新订阅的 Mod 下载完成后点“刷新”，或下次启动游戏时自动启用。");
             }
             catch (Exception ex)
             {
