@@ -101,7 +101,7 @@ namespace StudentAgeModManager.Tests
         private static void Run(string tempRoot)
         {
             var managerVersion = FileVersionInfo.GetVersionInfo(typeof(MainForm).Assembly.Location);
-            Assert(managerVersion.ProductVersion == "1.2.2" &&
+            Assert(managerVersion.ProductVersion == "1.3.0" &&
                    !managerVersion.ProductVersion.Contains("+"),
                 "release manager metadata should expose the exact public version without a stale Git suffix");
 
