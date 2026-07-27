@@ -224,6 +224,18 @@ namespace StudentAgeModManager
             {
                 SetStatus("本地", SourceColor,
                     "未收录", NeutralColor, "路径冲突", Color.DarkOrange);
+                // 冲突不能是死胡同：仍允许启用/禁用本副本。管理器会先把另一
+                // 路径上的同名副本归档到 ModManager\conflict-backup，从不覆盖丢失。
+                // 冲突双方版本号常常相同（开发构建不总递增版本），文件时间是
+                // 作者分辨新旧的唯一线索，必须摆在卡片上。
+                if (unit.LastWriteTimeUtc != null)
+                    _desc.Text += " · 本副本更新于 " + unit.LastWriteTimeUtc.Value
+                        .ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+                _desc.Text += " · 点“" + (unit.IsDisabled ? "启用" : "禁用")
+                    + "”将保留本副本，另一路径的副本会归档到 ModManager\\conflict-backup";
+                _btnToggle.Visible = true;
+                _btnToggle.Enabled = true;
+                _btnToggle.Text = unit.IsDisabled ? "启用" : "禁用";
                 return;
             }
 

@@ -15,6 +15,12 @@ namespace StudentAgeModManager.Core
         /// </summary>
         public string DisabledDir => Path.Combine(StateDir, "disabled");
 
+        /// <summary>
+        /// 路径冲突解决时被顶替副本的归档区。管理器从不删除文件：
+        /// 冲突下启用/禁用会先把目标位置的另一份副本整体搬到这里。
+        /// </summary>
+        public string ConflictBackupDir => Path.Combine(StateDir, "conflict-backup");
+
         public string WorkshopMetadataCachePath =>
             Path.Combine(StateDir, "workshop-metadata.json");
 

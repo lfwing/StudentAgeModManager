@@ -101,7 +101,7 @@ namespace StudentAgeModManager.Tests
         private static void Run(string tempRoot)
         {
             var managerVersion = FileVersionInfo.GetVersionInfo(typeof(MainForm).Assembly.Location);
-            Assert(managerVersion.ProductVersion == "1.2.0" &&
+            Assert(managerVersion.ProductVersion == "1.2.2" &&
                    !managerVersion.ProductVersion.Contains("+"),
                 "release manager metadata should expose the exact public version without a stale Git suffix");
 
@@ -2002,9 +2002,23 @@ namespace StudentAgeModManager.Tests
                     "未收录 should be neutral gray while 未启用 should be red");
 
                 localUnit.HasPathConflict = true;
+                localUnit.LastWriteTimeUtc = DateTime.UtcNow;
                 card.BindLocal(localUnit);
-                Assert(card.StatusText == "本地 · 未收录 · 路径冲突" && !toggle.Visible,
-                    "conflicting copies should be displayed without a destructive toggle");
+                Assert(card.StatusText == "本地 · 未收录 · 路径冲突" &&
+                       toggle.Visible && toggle.Enabled && toggle.Text == "启用" &&
+                       description.Text.Contains("conflict-backup") &&
+                       description.Text.Contains("更新于"),
+                    "conflicting disabled copies must keep an enable action, explain the " +
+                    "archive behaviour and show the copy's write time");
+
+                localUnit.IsDisabled = false;
+                localUnit.RelativePath = "BepInEx\\plugins\\LocalExample";
+                card.BindLocal(localUnit);
+                Assert(card.StatusText == "本地 · 未收录 · 路径冲突" &&
+                       toggle.Visible && toggle.Enabled && toggle.Text == "禁用" &&
+                       description.Text.Contains("conflict-backup"),
+                    "conflicting enabled copies must keep a disable action and explain " +
+                    "that the other copy gets archived");
 
                 localUnit.HasPathConflict = false;
                 localUnit.IsDisabled = false;
@@ -2097,8 +2111,9 @@ namespace StudentAgeModManager.Tests
             Assert(directory != null && directory.Source == LocalPluginSource.Local &&
                    directory.DisplayName == "Directory Mod" &&
                    directory.DisplayVersion == "1.0.0" && directory.DllCount == 2 &&
-                   directory.Plugins.Count == 1,
-                "directory plugins should be grouped with dependencies and read BepInPlugin metadata");
+                   directory.Plugins.Count == 1 && directory.LastWriteTimeUtc != null,
+                "directory plugins should be grouped with dependencies, read BepInPlugin metadata " +
+                "and carry the newest DLL write time");
             Assert(rootPlugin != null && !rootPlugin.IsDirectory &&
                    rootPlugin.DisplayName == "Root Mod" && rootPlugin.DisplayVersion == "2.0.0",
                 "a root-level plugin DLL should be represented as an independent local unit");
@@ -2134,7 +2149,49 @@ namespace StudentAgeModManager.Tests
                 "disabling must refuse to overwrite an existing disabled file");
             Assert(File.Exists(rootDll) && new FileInfo(rootConflict).Length == rootLength,
                 "an enable/disable collision must leave both source and target untouched");
-            File.Delete(rootConflict);
+
+            // 冲突不再是死胡同：带 HasPathConflict 标记的单元可以照常禁用，
+            // 目标位置的旧副本先被整体归档到 conflict-backup，从不覆盖丢失。
+            using (var stream = new FileStream(rootConflict, FileMode.Append, FileAccess.Write))
+                stream.WriteByte(0); // 让旧副本长度可区分，验证归档的是哪一份。
+            long staleLength = rootLength + 1;
+            LocalPluginUnit conflictedEnabled =
+                conflictingUnits.Single(unit => !unit.IsDisabled);
+            string conflictBackupRoot = Path.Combine(gameRoot, "BepInEx", "ModManager",
+                "conflict-backup");
+            string archivedStale = manager.Disable(conflictedEnabled);
+            Assert(archivedStale != null && File.Exists(archivedStale) &&
+                   new FileInfo(archivedStale).Length == staleLength &&
+                   archivedStale.StartsWith(conflictBackupRoot,
+                       StringComparison.OrdinalIgnoreCase),
+                "conflict-aware disable must archive the stale disabled copy into conflict-backup");
+            Assert(!File.Exists(rootDll) && File.Exists(rootConflict) &&
+                   new FileInfo(rootConflict).Length == rootLength,
+                "conflict-aware disable must then move the enabled copy into the disabled slot");
+
+            // 反向：冲突下的“启用”把 plugins 现用副本归档、让禁用副本回位。
+            File.Copy(rootConflict, rootDll);
+            List<LocalPluginUnit> reconflicted = scanner.Scan(gameRoot)
+                .Where(unit => unit.UnitKey == "RootMod.dll").ToList();
+            Assert(reconflicted.Count == 2 && reconflicted.All(unit => unit.HasPathConflict),
+                "recreating the duplicate should re-flag both copies as a path conflict");
+            using (var stream = new FileStream(rootDll, FileMode.Append, FileAccess.Write))
+            {
+                stream.WriteByte(0);
+                stream.WriteByte(0);
+            }
+            LocalPluginUnit conflictedDisabled =
+                reconflicted.Single(unit => unit.IsDisabled);
+            string archivedActive = manager.Enable(conflictedDisabled);
+            Assert(archivedActive != null && File.Exists(archivedActive) &&
+                   new FileInfo(archivedActive).Length == rootLength + 2 &&
+                   !string.Equals(archivedActive, archivedStale,
+                       StringComparison.OrdinalIgnoreCase),
+                "conflict-aware enable must archive the active plugins copy " +
+                "without touching earlier archives");
+            Assert(File.Exists(rootDll) && !File.Exists(rootConflict) &&
+                   new FileInfo(rootDll).Length == rootLength,
+                "conflict-aware enable must restore the disabled copy into BepInEx/plugins");
 
             manager.Disable(rootPlugin);
             Assert(!File.Exists(rootDll) && File.Exists(rootConflict),

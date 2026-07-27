@@ -288,6 +288,7 @@ namespace StudentAgeModManager.Core
             if (dllPaths.Count == 0) return null;
 
             var plugins = new List<ScannedPlugin>();
+            DateTime? newestWriteUtc = null;
             foreach (string dllPath in dllPaths)
             {
                 try
@@ -296,6 +297,8 @@ namespace StudentAgeModManager.Core
                     if (!info.Exists || info.Length <= 0 || info.Length > MaxAssemblyBytes ||
                         !budget.TryConsume(info.Length))
                         continue;
+                    if (newestWriteUtc == null || info.LastWriteTimeUtc > newestWriteUtc)
+                        newestWriteUtc = info.LastWriteTimeUtc;
                     var discovered = probe.Inspect(dllPath, gameRoot);
                     if (discovered == null) continue;
                     foreach (var plugin in discovered)
@@ -340,6 +343,7 @@ namespace StudentAgeModManager.Core
                 EnabledRelativePath = enabledRelativePath,
                 IsDirectory = isDirectory,
                 IsDisabled = isDisabled,
+                LastWriteTimeUtc = newestWriteUtc,
                 Source = source,
                 WorkshopId = workshopId,
                 DllCount = dllPaths.Count,

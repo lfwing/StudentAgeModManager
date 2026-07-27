@@ -654,21 +654,24 @@ namespace StudentAgeModManager
                 await ToggleWorkshopPluginAsync(unit);
                 return;
             }
+            if (unit.HasPathConflict && !ConfirmConflictResolution(unit)) return;
 
             int listScrollOffset = CurrentListScrollOffset();
             bool enabling = unit.IsDisabled;
             SetBusy(true, (enabling ? "正在启用 " : "正在禁用 ") + unit.DisplayName + "…");
             try
             {
-                if (enabling)
-                    _localPluginManager.Enable(unit);
-                else
-                    _localPluginManager.Disable(unit);
+                string archivedConflictCopy = enabling
+                    ? _localPluginManager.Enable(unit)
+                    : _localPluginManager.Disable(unit);
 
                 _localUnits = await ScanLocalPluginsAsync(_workshopDiscovery != null &&
                     _workshopDiscovery.Succeeded ? _workshopDiscovery.Items : null);
                 RenderListAtScrollOffset(listScrollOffset);
                 SetStatus(unit.DisplayName + (enabling ? " 已启用" : " 已禁用") +
+                    (archivedConflictCopy != null
+                        ? "；冲突的另一副本已归档到 " + archivedConflictCopy
+                        : "") +
                     "（重启游戏生效）");
             }
             catch (Exception ex)
@@ -680,6 +683,48 @@ namespace StudentAgeModManager
             {
                 SetBusy(false, null);
             }
+        }
+
+        /// <summary>
+        /// 路径冲突下的启用/禁用会顶替另一份副本。操作前必须让作者明确知道
+        /// 保留的是哪一份——冲突双方版本号往往相同（开发构建重新部署即复现），
+        /// 点错方向会把新版归档、旧版上位，且界面上看不出任何异常。
+        /// </summary>
+        private bool ConfirmConflictResolution(LocalPluginUnit unit)
+        {
+            LocalPluginUnit other = _localUnits != null
+                ? _localUnits.FirstOrDefault(candidate =>
+                    !ReferenceEquals(candidate, unit) &&
+                    candidate.Source == LocalPluginSource.Local &&
+                    string.Equals(candidate.UnitKey, unit.UnitKey,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    candidate.IsDisabled != unit.IsDisabled)
+                : null;
+
+            string message =
+                "“" + unit.DisplayName + "”存在路径冲突，两份副本：\n\n" +
+                "保留并" + (unit.IsDisabled ? "启用" : "禁用") + "：\n  " +
+                unit.RelativePath + DescribeWriteTime(unit) + "\n" +
+                "归档到 ModManager\\conflict-backup：\n  " +
+                (other != null ? other.RelativePath : "另一路径的同名副本") +
+                DescribeWriteTime(other) + "\n";
+            if (unit.LastWriteTimeUtc != null && other != null &&
+                other.LastWriteTimeUtc != null &&
+                unit.LastWriteTimeUtc < other.LastWriteTimeUtc)
+            {
+                message += "\n注意：你保留的这份比将被归档的那份更旧！\n" +
+                           "若想保留较新的副本，请取消，改到另一张卡片上操作。";
+            }
+            return MessageBox.Show(this, message, "解决路径冲突",
+                MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.OK;
+        }
+
+        private static string DescribeWriteTime(LocalPluginUnit unit)
+        {
+            return unit != null && unit.LastWriteTimeUtc != null
+                ? "（更新于 " + unit.LastWriteTimeUtc.Value.ToLocalTime()
+                    .ToString("yyyy-MM-dd HH:mm") + "）"
+                : string.Empty;
         }
 
         private async Task ToggleWorkshopPluginAsync(LocalPluginUnit unit)

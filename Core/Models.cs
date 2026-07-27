@@ -349,6 +349,8 @@ namespace StudentAgeModManager.Core
         public string EnabledRelativePath { get; set; }
         public bool IsDirectory { get; set; }
         public bool IsDisabled { get; set; }
+        /// <summary>单元内最新 DLL 的修改时间（UTC）。路径冲突时用于区分两份副本的新旧。</summary>
+        public DateTime? LastWriteTimeUtc { get; set; }
         public bool HasPathConflict { get; set; }
         public bool HasGuidConflict { get; set; }
         public List<string> ConflictingPluginGuids { get; set; } = new List<string>();
