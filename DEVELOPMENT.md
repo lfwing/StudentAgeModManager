@@ -139,6 +139,16 @@ Steam 数据：
 <SteamLibrary>/steamapps/workshop/content/1991040/
 ```
 
+### 生效前提
+
+只有以下条件全部满足时 Bridge 才让工坊 Mod 生效；任一状态不明确即本次不加载：
+
+- 当前 Steam 用户确实订阅了该项目；
+- Steam 已完成下载，项目不在更新中；
+- 项目已在游戏原生 `_mod` 中启用，或是首次识别到的新有效订阅；
+- 项目根目录有有效的 `workshop-plugin.json`；
+- 固定的 `BepInEx/plugins` 目录中至少有一个 DLL。
+
 ### 自动启用规则
 
 - 状态文件首次创建时，当前订阅只登记为基线，不修改 `_mod`。
