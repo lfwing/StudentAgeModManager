@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -101,7 +102,7 @@ namespace StudentAgeModManager.Tests
         private static void Run(string tempRoot)
         {
             var managerVersion = FileVersionInfo.GetVersionInfo(typeof(MainForm).Assembly.Location);
-            Assert(managerVersion.ProductVersion == "1.3.0" &&
+            Assert(managerVersion.ProductVersion == "1.3.1" &&
                    !managerVersion.ProductVersion.Contains("+"),
                 "release manager metadata should expose the exact public version without a stale Git suffix");
 
@@ -2119,6 +2120,7 @@ namespace StudentAgeModManager.Tests
                 "a root-level plugin DLL should be represented as an independent local unit");
 
             AssertScannerWorksWithInternetZoneMarker(scanner, gameRoot, "RootMod.dll");
+            AssertScannerWorksWhenManagerIsRenamed(root, gameRoot, "RootMod.dll");
 
             var manager = new LocalPluginManager(new LocalState(gameRoot));
             manager.Disable(directory);
@@ -2351,6 +2353,52 @@ namespace StudentAgeModManager.Tests
                     WriteAlternateDataStream(zoneStreamPath, previousZone);
                 else
                     DeleteFile(zoneStreamPath);
+            }
+        }
+
+        private static void AssertScannerWorksWhenManagerIsRenamed(string root,
+            string gameRoot, string expectedUnitKey)
+        {
+            string hostRoot = Path.Combine(root, "renamed-manager-host");
+            Directory.CreateDirectory(hostRoot);
+            string renamedManagerPath = Path.Combine(hostRoot, "ModManager (4).exe");
+            File.Copy(typeof(LocalPluginScanner).Assembly.Location, renamedManagerPath, true);
+
+            Assert(ScanWithIsolatedManagerHost(renamedManagerPath, gameRoot, expectedUnitKey),
+                "plugin scanning must use the running manager bytes when its executable " +
+                "has been renamed and no canonical ModManager.exe exists beside it");
+
+            // A stale or hostile same-name sibling must not decide which probe runs. A malformed
+            // assembly is enough to prove that activation uses the trusted self-copy by path.
+            File.WriteAllBytes(Path.Combine(hostRoot, "ModManager.exe"),
+                new byte[] { 0x4d, 0x5a, 0, 0 });
+            Assert(ScanWithIsolatedManagerHost(renamedManagerPath, gameRoot, expectedUnitKey),
+                "plugin scanning must ignore an unrelated sibling ModManager.exe when the " +
+                "running executable has a browser-added suffix");
+        }
+
+        private static bool ScanWithIsolatedManagerHost(string managerPath, string gameRoot,
+            string expectedUnitKey)
+        {
+            string testHostDirectory = Path.GetDirectoryName(
+                typeof(RenamedManagerScannerHost).Assembly.Location);
+            var setup = new AppDomainSetup
+            {
+                ApplicationBase = testHostDirectory,
+                ShadowCopyFiles = "false",
+            };
+            AppDomain domain = AppDomain.CreateDomain(
+                "StudentAge.RenamedManagerTest." + Guid.NewGuid().ToString("N"), null, setup);
+            try
+            {
+                var host = (RenamedManagerScannerHost)domain.CreateInstanceAndUnwrap(
+                    typeof(RenamedManagerScannerHost).Assembly.FullName,
+                    typeof(RenamedManagerScannerHost).FullName);
+                return host.ScanContains(managerPath, gameRoot, expectedUnitKey);
+            }
+            finally
+            {
+                AppDomain.Unload(domain);
             }
         }
 
@@ -2803,6 +2851,53 @@ namespace StudentAgeModManager.Tests
         private static void Assert(bool condition, string message)
         {
             if (!condition) throw new InvalidOperationException("Assertion failed: " + message);
+        }
+    }
+
+    /// <summary>
+    /// Loads a manager copy by its physical path inside a clean AppDomain. This keeps the
+    /// regression test honest: the statically referenced canonical ModManager.exe from the test
+    /// output cannot satisfy the renamed manager's own metadata-domain binding.
+    /// </summary>
+    public sealed class RenamedManagerScannerHost : MarshalByRefObject
+    {
+        public bool ScanContains(string managerPath, string gameRoot, string expectedUnitKey)
+        {
+            string expectedManagerPath = Path.GetFullPath(managerPath);
+            Assembly managerAssembly = Assembly.LoadFrom(expectedManagerPath);
+            if (!string.Equals(Path.GetFullPath(managerAssembly.Location), expectedManagerPath,
+                StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Test manager resolved from an unexpected path: " +
+                    managerAssembly.Location);
+
+            Type scannerType = managerAssembly.GetType(
+                "StudentAgeModManager.Core.LocalPluginScanner", true);
+            object scanner = Activator.CreateInstance(scannerType);
+            MethodInfo scanMethod = scannerType.GetMethod("Scan", new[] { typeof(string) });
+            object units;
+            try
+            {
+                units = scanMethod.Invoke(scanner, new object[] { gameRoot });
+            }
+            catch (TargetInvocationException ex)
+            {
+                if (ex.InnerException != null) throw ex.InnerException;
+                throw;
+            }
+
+            foreach (object unit in (IEnumerable)units)
+            {
+                PropertyInfo unitKeyProperty = unit.GetType().GetProperty("UnitKey");
+                string unitKey = unitKeyProperty?.GetValue(unit, null) as string;
+                if (string.Equals(unitKey, expectedUnitKey, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
+        public override object InitializeLifetimeService()
+        {
+            return null;
         }
     }
 }

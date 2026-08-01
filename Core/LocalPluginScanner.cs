@@ -18,6 +18,9 @@ namespace StudentAgeModManager.Core
         private const long MaxTotalAssemblyBytes = 512L * 1024L * 1024L;
         private const int MaxDllsPerUnit = 2048;
         private const int MaxScannedDlls = 4096;
+        private const string MetadataHostDirectoryPrefix =
+            "StudentAge.ModManager.Metadata.";
+        private const string MetadataHostFileName = "ModManager.exe";
 
         public List<LocalPluginUnit> Scan(string gameDir)
         {
@@ -40,13 +43,16 @@ namespace StudentAgeModManager.Core
                 return result;
 
             AppDomain metadataDomain = null;
+            string metadataHostPath = null;
             try
             {
-                PluginMetadataProbe probe;
+                PluginMetadataProbeClient probe;
                 try
                 {
-                    metadataDomain = CreateMetadataDomain();
-                    probe = CreateMetadataProbe(metadataDomain);
+                    metadataHostPath = CreateMetadataHostCopy();
+                    metadataDomain = CreateMetadataDomain(
+                        Path.GetDirectoryName(metadataHostPath));
+                    probe = CreateMetadataProbe(metadataDomain, metadataHostPath);
                 }
                 catch (Exception ex)
                 {
@@ -66,6 +72,7 @@ namespace StudentAgeModManager.Core
             {
                 if (metadataDomain != null)
                     try { AppDomain.Unload(metadataDomain); } catch { }
+                CleanupMetadataHostCopy(metadataHostPath);
             }
 
             foreach (var group in result
@@ -86,7 +93,7 @@ namespace StudentAgeModManager.Core
         }
 
         private static void ScanManagedWorkshopUnits(string gameRoot,
-            IEnumerable<WorkshopManagedItem> items, PluginMetadataProbe probe,
+            IEnumerable<WorkshopManagedItem> items, PluginMetadataProbeClient probe,
             ScanBudget budget, List<LocalPluginUnit> result)
         {
             foreach (WorkshopManagedItem item in items.Where(value => value != null)
@@ -164,46 +171,81 @@ namespace StudentAgeModManager.Core
             return unit.Source != LocalPluginSource.SteamWorkshop || unit.IsWorkshopConnected;
         }
 
-        private static AppDomain CreateMetadataDomain()
+        private static string CreateMetadataHostCopy()
         {
-            string hostDirectory = null;
+            Assembly hostAssembly = typeof(PluginMetadataProbe).Assembly;
+            string hostPath = hostAssembly.Location;
+            if (string.IsNullOrEmpty(hostPath))
+                throw new InvalidOperationException("无法确定管理器程序集路径。");
+
+            // Read the already-running manager, then write only its primary byte stream into a
+            // private temporary directory. This deliberately drops Zone.Identifier (MOTW) and
+            // prevents a renamed executable from binding to a different sibling ModManager.exe.
+            byte[] hostBytes = File.ReadAllBytes(hostPath);
+            string hostDirectory = Path.Combine(Path.GetTempPath(),
+                MetadataHostDirectoryPrefix + Guid.NewGuid().ToString("N"));
+            string trustedHostPath = Path.Combine(hostDirectory, MetadataHostFileName);
             try
             {
-                hostDirectory = Path.GetDirectoryName(
-                    typeof(LocalPluginScanner).Assembly.Location);
+                Directory.CreateDirectory(hostDirectory);
+                using (var stream = new FileStream(trustedHostPath, FileMode.CreateNew,
+                    FileAccess.Write, FileShare.Read))
+                {
+                    stream.Write(hostBytes, 0, hostBytes.Length);
+                }
+                return trustedHostPath;
             }
-            catch { }
+            catch
+            {
+                CleanupMetadataHostCopy(trustedHostPath);
+                throw;
+            }
+        }
+
+        private static void CleanupMetadataHostCopy(string trustedHostPath)
+        {
+            if (string.IsNullOrWhiteSpace(trustedHostPath)) return;
+            try { File.Delete(trustedHostPath); } catch { }
+
+            string hostDirectory;
+            try { hostDirectory = Path.GetDirectoryName(trustedHostPath); }
+            catch { return; }
+            if (string.IsNullOrWhiteSpace(hostDirectory)) return;
+            // The directory is unique and should contain only the host copy. Never recurse if an
+            // unexpected file or reparse point appeared while the disposable domain was alive.
+            try { Directory.Delete(hostDirectory, false); } catch { }
+        }
+
+        private static AppDomain CreateMetadataDomain(string hostDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(hostDirectory))
+                throw new ArgumentException("扫描器宿主目录不能为空。", nameof(hostDirectory));
             var setup = new AppDomainSetup
             {
-                ApplicationBase = string.IsNullOrWhiteSpace(hostDirectory)
-                    ? AppDomain.CurrentDomain.BaseDirectory
-                    : hostDirectory,
+                ApplicationBase = Path.GetFullPath(hostDirectory),
                 ShadowCopyFiles = "false",
             };
             return AppDomain.CreateDomain("StudentAge.PluginMetadata." + Guid.NewGuid().ToString("N"),
                 null, setup);
         }
 
-        private static PluginMetadataProbe CreateMetadataProbe(AppDomain metadataDomain)
+        private static PluginMetadataProbeClient CreateMetadataProbe(AppDomain metadataDomain,
+            string trustedHostPath)
         {
             if (metadataDomain == null) throw new ArgumentNullException(nameof(metadataDomain));
+            if (string.IsNullOrWhiteSpace(trustedHostPath))
+                throw new ArgumentException("扫描器宿主路径不能为空。", nameof(trustedHostPath));
 
-            Assembly hostAssembly = typeof(PluginMetadataProbe).Assembly;
-            string hostPath = hostAssembly.Location;
-            if (string.IsNullOrEmpty(hostPath))
-                throw new InvalidOperationException("无法确定管理器程序集路径。");
-
-            // Browser downloads normally carry a Zone.Identifier (MOTW). The main EXE may run,
-            // while CreateInstanceFromAndUnwrap(path, ...) is still rejected with 0x80131515.
-            // Loading the already-running manager assembly from its bytes keeps the disposable
-            // AppDomain boundary without removing the marker or enabling remote loads process-wide.
-            metadataDomain.Load(File.ReadAllBytes(hostPath));
-            return (PluginMetadataProbe)metadataDomain.CreateInstanceAndUnwrap(
-                hostAssembly.FullName, typeof(PluginMetadataProbe).FullName);
+            // Activate by the exact trusted-copy path. Name-based activation would probe
+            // <ApplicationBase>/ModManager.exe and could load a stale or unrelated sibling when
+            // the running executable was renamed by a browser (for example, "ModManager (4).exe").
+            object remoteProbe = metadataDomain.CreateInstanceFromAndUnwrap(
+                trustedHostPath, typeof(PluginMetadataProbe).FullName);
+            return new PluginMetadataProbeClient(remoteProbe);
         }
 
         private static void ScanEnabledLocalUnits(string gameRoot, string pluginRoot,
-            PluginMetadataProbe probe, ScanBudget budget, List<LocalPluginUnit> result)
+            PluginMetadataProbeClient probe, ScanBudget budget, List<LocalPluginUnit> result)
         {
             if (!Directory.Exists(pluginRoot) || IsReparsePoint(pluginRoot)) return;
 
@@ -226,7 +268,7 @@ namespace StudentAgeModManager.Core
         }
 
         private static void ScanDisabledLocalUnits(string gameRoot, string disabledRoot,
-            PluginMetadataProbe probe, ScanBudget budget, List<LocalPluginUnit> result)
+            PluginMetadataProbeClient probe, ScanBudget budget, List<LocalPluginUnit> result)
         {
             if (!Directory.Exists(disabledRoot) || IsReparsePoint(disabledRoot)) return;
 
@@ -249,7 +291,7 @@ namespace StudentAgeModManager.Core
         }
 
         private static void ScanWorkshopUnits(string gameRoot, string pluginRoot,
-            PluginMetadataProbe probe, ScanBudget budget, List<LocalPluginUnit> result)
+            PluginMetadataProbeClient probe, ScanBudget budget, List<LocalPluginUnit> result)
         {
             string workshopRoot = Path.Combine(pluginRoot, ".workshop");
             if (!Directory.Exists(workshopRoot) || IsReparsePoint(workshopRoot)) return;
@@ -280,7 +322,7 @@ namespace StudentAgeModManager.Core
         private static LocalPluginUnit ScanUnit(string gameRoot, string path,
             string currentRelativePath, string enabledRelativePath, string unitKey,
             bool isDirectory, bool isDisabled, LocalPluginSource source, string workshopId,
-            PluginMetadataProbe probe, ScanBudget budget)
+            PluginMetadataProbeClient probe, ScanBudget budget)
         {
             var dllPaths = isDirectory
                 ? EnumerateDllsWithoutFollowingLinks(path)
@@ -435,6 +477,59 @@ namespace StudentAgeModManager.Core
             return Path.Combine(parts);
         }
 
+        /// <summary>
+        /// Keeps manager-defined DTOs out of the remoting boundary. The manager may itself have
+        /// been loaded from a renamed path or a non-default load context, so directly casting the
+        /// transparent proxy (or its List&lt;ScannedPlugin&gt; result) can bind to a sibling assembly.
+        /// </summary>
+        private sealed class PluginMetadataProbeClient
+        {
+            private readonly object _remoteProbe;
+            private readonly MethodInfo _inspectValuesMethod;
+
+            public PluginMetadataProbeClient(object remoteProbe)
+            {
+                _remoteProbe = remoteProbe ?? throw new ArgumentNullException(nameof(remoteProbe));
+                _inspectValuesMethod = remoteProbe.GetType().GetMethod("InspectValues",
+                    new[] { typeof(string), typeof(string) });
+                if (_inspectValuesMethod == null)
+                    throw new MissingMethodException(remoteProbe.GetType().FullName,
+                        "InspectValues");
+            }
+
+            public List<ScannedPlugin> Inspect(string assemblyPath, string gameRoot)
+            {
+                object raw;
+                try
+                {
+                    raw = _inspectValuesMethod.Invoke(_remoteProbe,
+                        new object[] { assemblyPath, gameRoot });
+                }
+                catch (TargetInvocationException ex)
+                {
+                    if (ex.InnerException != null) throw ex.InnerException;
+                    throw;
+                }
+
+                var rows = raw as string[][];
+                if (rows == null)
+                    throw new InvalidDataException("隔离扫描器返回了无效的元数据格式。");
+                var result = new List<ScannedPlugin>(rows.Length);
+                foreach (string[] row in rows)
+                {
+                    if (row == null || row.Length != 3)
+                        throw new InvalidDataException("隔离扫描器返回了无效的插件记录。");
+                    result.Add(new ScannedPlugin
+                    {
+                        Guid = row[0],
+                        Name = row[1],
+                        Version = row[2],
+                    });
+                }
+                return result;
+            }
+        }
+
         private sealed class ScanBudget
         {
             private int _dllCount;
@@ -461,6 +556,13 @@ namespace StudentAgeModManager.Core
         private string[] _searchDirectories;
         private readonly Dictionary<string, List<ScannedPlugin>> _metadataByAssemblyIdentity =
             new Dictionary<string, List<ScannedPlugin>>(StringComparer.OrdinalIgnoreCase);
+
+        public string[][] InspectValues(string assemblyPath, string gameRoot)
+        {
+            return Inspect(assemblyPath, gameRoot)
+                .Select(plugin => new[] { plugin.Guid, plugin.Name, plugin.Version })
+                .ToArray();
+        }
 
         public List<ScannedPlugin> Inspect(string assemblyPath, string gameRoot)
         {

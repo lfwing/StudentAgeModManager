@@ -66,7 +66,9 @@ BepInEx/plugins/.workshop/<WorkshopId>
 
 - 一个直接子目录是一个启停单元；根级 DLL 单独成组。
 - 通过临时 AppDomain 和 `ReflectionOnlyLoad` 读取 `BepInPlugin`，不执行插件代码；扫描器宿主
-  从当前已运行管理器的内存字节载入临时域，避免浏览器 MOTW 导致二次路径加载失败。
+  从当前运行管理器的主数据流复制到随机临时目录，再按可信副本的精确路径载入临时域。
+  该副本不继承浏览器 MOTW，也不会因原 EXE 被重命名而误载同目录的另一份 `ModManager.exe`；
+  临时域卸载后立即清理副本。
 - 普通重解析点不跟随；只有 `.workshop/<规范数字 ID>` 的目录联接视为工坊来源。
 - 禁用时移到 `BepInEx/ModManager/disabled`，启用时原样移回。
 - 不覆盖同名目标、不移动工坊联接、不删除文件，游戏运行时拒绝移动。

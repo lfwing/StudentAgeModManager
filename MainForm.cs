@@ -68,6 +68,12 @@ namespace StudentAgeModManager
         public MainForm()
         {
             Text = "StudentAge Mod 管理器 v" + CurrentVersion();
+            try
+            {
+                Icon = System.Drawing.Icon.ExtractAssociatedIcon(
+                    typeof(MainForm).Assembly.Location);
+            }
+            catch { }
             ClientSize = new Size(620, 620);
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
