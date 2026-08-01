@@ -18,12 +18,10 @@
 1. 把符合格式的 DLL Mod 发布到《学生时代》Steam 创意工坊；
 2. 取得真实的 Workshop ID；
 3. Fork（复制）本仓库，并在 `mods.json` 中添加一条记录；
-4. 向本仓库的 **`main` 分支**提交 Pull Request（简称 PR，也就是合并申请）；
+4. 向本仓库的 **`main` 分支**提交 Pull Request（PR）；
 5. 等待自动检查和维护者审核。
 
-如果确实不会或不方便提交 PR，也可以使用后文的 Issue 备用方式。Issue 需要维护者代为核对、编辑和测试，会增加维护工作量，因此处理速度可能较慢。
-
-下面会逐步说明。
+不方便使用 PR 的话，文末有 Issue 备用方式。
 
 ---
 
@@ -65,27 +63,20 @@
 
 ## 第 2 步：找到 Workshop ID
 
-打开你的 Steam 工坊页面，例如：
+打开你的 Steam 工坊页面，地址里 `?id=` 后面的数字就是 Workshop ID：
 
 ```text
 https://steamcommunity.com/sharedfiles/filedetails/?id=1234567890
+                                                       ~~~~~~~~~~
 ```
 
-其中：
-
-```text
-1234567890
-```
-
-就是 Workshop ID。
-
-在 `mods.json` 中推荐直接填写纯数字字符串：
+在 `mods.json` 中填写为字符串：
 
 ```json
 "workshopId": "1234567890"
 ```
 
-注意外面的双引号不能省略。以下写法是错误的：
+外面的双引号不能省略，下面这样是错误的：
 
 ```json
 "workshopId": 1234567890
@@ -95,15 +86,11 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=1234567890
 
 ## 第 3 步：修改 `mods.json`
 
-中央推荐目录文件位于仓库根目录：
-
-```text
-mods.json
-```
+中央推荐目录文件位于仓库根目录的 `mods.json`。
 
 ### 最小模板
 
-只填写内部 ID 和 Workshop ID 即可：
+只填写内部 ID 和 Workshop ID 即可，名称和简介会自动从 Steam 工坊读取：
 
 ```json
 {
@@ -111,8 +98,6 @@ mods.json
   "workshopId": "1234567890"
 }
 ```
-
-如果没有填写名称和简介，管理器会从 Steam 工坊读取。
 
 ### 推荐模板
 
@@ -136,30 +121,11 @@ mods.json
 | `name` | 否 | 管理器中的显示名称；不填则读取 Steam 标题 |
 | `description` | 否 | 管理器中的简短介绍；不填则读取 Steam 说明 |
 
-`id` 发布后尽量不要修改。它不是下载地址，也不要求和 DLL 文件名完全相同。
+`id` 发布后尽量不要改动，它和 DLL 文件名没有关系。
 
 ### 放入 `mods` 数组
 
-假设原来是：
-
-```json
-"mods": []
-```
-
-可以改成：
-
-```json
-"mods": [
-  {
-    "id": "author-my-mod",
-    "name": "我的 Mod",
-    "description": "一句话说明这个 Mod 的主要功能",
-    "workshopId": "1234567890"
-  }
-]
-```
-
-如果数组中已经有其他 Mod，记得在相邻对象之间添加英文逗号：
+把你的条目加进根对象的 `mods` 数组，多个条目之间用英文逗号分隔：
 
 ```json
 "mods": [
@@ -174,29 +140,15 @@ mods.json
 ]
 ```
 
-同时把根对象中的 `updatedAt` 更新为当天日期：
+同时把根对象中的 `updatedAt` 改为当天日期，格式为 `YYYY-MM-DD`：
 
 ```json
 "updatedAt": "2026-07-13"
 ```
 
-日期格式为：
-
-```text
-YYYY-MM-DD
-```
-
 ### 不要再填写旧版直装字段
 
-管理器已经不支持 DLL/ZIP 直装索引，请不要添加：
-
-```json
-"downloadUrl"
-"assetType"
-"installDir"
-```
-
-DLL 文件由 Steam Workshop 分发和更新。
+管理器已经不支持 DLL/ZIP 直装索引，请不要添加 `downloadUrl`、`assetType` 或 `installDir`。DLL 文件由 Steam Workshop 分发和更新。
 
 ---
 
@@ -211,43 +163,17 @@ DLL 文件由 Steam Workshop 分发和更新。
 5. 点击 **Contribute → Open pull request**；
 6. 创建 PR 时，把目标分支（base branch）选择为 **`main`**。
 
-当前正式版管理器读取的是：
+正式版管理器只读取 `main` 分支的 `mods.json`，提交到其他分支不会进入推荐目录。
 
-```text
-StudentAgeModManager/main/mods.json
-```
+### PR 描述
 
-因此 PR 请直接提交到 `main`；提交到其他分支不会进入正式推荐目录。
-
-### PR 描述建议包含
-
-可以直接复制下面的模板：
-
-```markdown
-## Mod 信息
-
-- Mod 名称：
-- Workshop ID：
-- Steam 页面：
-- 源码仓库：
-- 作者：
-- 许可证/分发授权：
-
-## 测试情况
-
-- [ ] 工坊项目已公开
-- [ ] 工坊包包含 workshop-plugin.json
-- [ ] DLL 位于 BepInEx/plugins
-- [ ] 订阅并下载后可以正常加载
-- [ ] 游戏内功能测试正常
-- [ ] 取消订阅或关闭后不会继续加载
-```
+打开 PR 时 GitHub 会自动带出模板，按提示填写 Mod 名称、Workshop ID、Steam 页面、源码仓库和授权信息即可。
 
 维护者主要会确认：项目确实属于你、源码和授权清楚、工坊包格式正确，并且不会误导玩家。
 
 ### 备用方式：提交 Issue
 
-**首选仍然是 PR。** PR 可以直接运行检查并合并；Issue 则需要维护者代你修改 `mods.json`、处理冲突和运行测试，会明显增加维护难度。因此 Issue 只作为不会使用 PR 时的备用入口，处理优先级和速度可能低于信息完整的 PR。
+**只在无法使用 PR 时才用 Issue。** Issue 需要维护者代你修改 `mods.json`、处理冲突并运行检查，处理速度会慢一些。
 
 如果确实无法提交 PR，可以打开：
 
@@ -287,15 +213,13 @@ Issue 标题建议写成：
 - [ ] 取消订阅或关闭后不会继续加载
 ```
 
-请不要只留下 Mod 名称或上传一个 DLL。Workshop ID、公开 Steam 页面、源码和授权信息仍然需要完整提供。提交 Issue 也不代表一定收录；条目仍需通过与 PR 相同的格式、安全和真实性检查。
+资料不完整（只写 Mod 名称、或直接上传一个 DLL）无法处理。Issue 投稿同样要通过与 PR 相同的格式、安全和真实性检查，并不代表一定收录。
 
 ---
 
 ## 第 5 步：等待自动检查
 
-提交 PR 后，GitHub 会自动运行检查。
-
-检查通过时会看到绿色标记。常见检查内容包括：
+提交 PR 后，GitHub 会自动运行检查，通过时显示绿色标记。常见检查内容包括：
 
 - `mods.json` 是否是有效 JSON；
 - `id` 和 Workshop ID 是否重复；
@@ -305,8 +229,6 @@ Issue 标题建议写成：
 - Steam 是否返回了有效标题。
 
 如果检查失败，不必重新创建 PR。直接在原分支继续修改并提交，PR 会自动重新检查。
-
-如果使用 Issue 投稿，Issue 本身不会直接修改索引。维护者需要先核对资料并代为创建代码改动，之后才会运行相同的自动检查；资料不完整时会请投稿者补充。
 
 ---
 
@@ -342,13 +264,7 @@ dotnet run --project .\ModManager.Tests\StudentAgeModManager.Tests.csproj `
 
 ### 没有收录，我的 Mod 就不能运行吗？
 
-不是。推荐目录不是加载白名单。只要工坊包有效并且玩家已经订阅、下载和启用，Workshop Bridge 就可以正常加载。
-
-管理器从本地 Steam 订阅数据发现有效 DLL 包，所以未收录项目在禁用时也会显示；启用后状态为：
-
-```text
-Steam 工坊 · 未收录 · 已启用
-```
+不是。推荐目录不是加载白名单，只要工坊包有效、玩家已订阅并启用，Workshop Bridge 就会加载它。未收录的项目在管理器中同样会显示。
 
 ### 收录后需要把 DLL 上传到 GitHub Release 吗？
 
@@ -358,22 +274,17 @@ Steam 工坊 · 未收录 · 已启用
 
 通常不需要。保持同一个 Workshop ID，Steam 会自动向订阅者分发更新。
 
-只有在以下情况才需要再次提交：
-
-- 更换了 Workshop ID；
-- 想修改索引中固定的名称或简介；
-- 需要修正索引信息。
+只有更换了 Workshop ID，或想修改索引中固定的名称、简介时，才需要再次提交。
 
 ### `name` 和 `description` 必须填写吗？
 
-不必。省略后会读取 Steam 标题和说明。
+不必，省略后会读取 Steam 标题和说明。
 
-如果填写了非空内容，管理器会优先显示索引中的文字。因此建议简介保持简短、客观，不要塞入下载链接或大段更新日志。
+如果填写了非空内容，管理器会优先显示索引中的文字。建议简介保持简短、客观，不要塞入下载链接或大段更新日志。
 
 ### 工坊项目暂时是私密的，可以先提交吗？
 
-不建议。你自己的电脑只要已经订阅，管理器仍能从本地发现和启停私密 DLL 项目；但自动检查
-无法验证私密或仅好友可见的项目，其他玩家也无法正常访问。请先公开，再提交 PR。
+不建议。你自己的电脑只要已经订阅，管理器仍能从本地发现和启停私密 DLL 项目；但自动检查无法验证私密或仅好友可见的项目，其他玩家也无法访问。请先公开，再提交 PR。
 
 ### 可以直接填写完整 Steam 链接吗？
 
@@ -388,7 +299,7 @@ https://steamcommunity.com/workshop/filedetails/?id=<WORKSHOP_ID>
 
 ### 一个工坊项目里可以有多个 DLL 吗？
 
-可以。依赖 DLL 可以和主插件一起放在 `BepInEx/plugins/<插件目录>` 中。固定插件目录中至少要有一个真正的 BepInEx 插件 DLL。
+可以。依赖 DLL 可以和主插件一起放在 `BepInEx/plugins/<插件目录>` 中，其中至少要有一个真正的 BepInEx 插件 DLL。
 
 ---
 
@@ -421,6 +332,8 @@ https://steamcommunity.com/workshop/filedetails/?id=<WORKSHOP_ID>
 - `name` 和 `description` 如果存在，只能是字符串或 `null`；
 - 不允许通过大小写不同的字段名重复定义同一字段。
 
+任一非法条目都会导致整份索引被拒绝。
+
 在线 Steam 检查还会确认：
 
 - 项目公开且可以读取；
@@ -448,4 +361,4 @@ Steam 返回的下载地址、文件名和路径不会进入索引。管理器�
 [ ] 使用 Issue 时，已提供建议内部 ID 和完整测试情况
 ```
 
-准备好后，优先提交 PR；确实无法使用 PR 时再提交 Issue。感谢你为《学生时代》Mod 社区贡献内容！
+感谢你为《学生时代》Mod 社区贡献内容！
