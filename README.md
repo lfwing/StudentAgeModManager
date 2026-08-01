@@ -1,10 +1,13 @@
 # StudentAge Mod 管理器
 
-这是《学生时代》的 BepInEx 与 Steam 创意工坊 DLL Mod 管理器。
+这是游戏《学生时代》的 BepInEx 与 Steam 创意工坊 DLL Mod 管理器。
+
+<img width="1024" height="1024" alt="image" src="https://github.com/user-attachments/assets/f20211c6-e826-489d-8230-db6c6eb6572c" />
+
 
 它可以：
 
-- 从 EXE 内嵌包一键离线安装 BepInEx 和 Workshop Bridge；
+- 从 EXE 内嵌包一键离线安装 BepInEx 和 自动桥接dll；
 - 打开推荐 Mod 的 Steam 工坊页面；
 - 显示当前 Steam 用户已订阅的 DLL 工坊项目，包括未收录、私密和已禁用项目；
 - 在管理器内启用或禁用工坊 DLL，不取消订阅、不移动 Steam 源文件；
