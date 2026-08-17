@@ -18,7 +18,7 @@
 		{
 			"id": "LFBetterAudio",
 			"name": "更好的音频效果",
-			"description": "为《学生时代》提供独立于原版音频系统的播放与演出能力",
+			"description": "提供独立于原版音频系统的播放渠道，增强游戏有关音频的演出效果；mod作者和玩家都需要安装",
 			"workshopId": "3763938041"
 		},
 		{
@@ -26,6 +26,12 @@
 			"name": "学生时代官方编辑器Plus",
 			"description": "增强游戏自带 Mod 编辑器：剧情图可视化编辑、预览图片、搜索等十余项功能增强；只需Mod作者安装",
 			"workshopId": "3783602310"
+		},
+		{
+			"id": "EC2BUnofficialPatch",
+			"name": "鹅城2班非官方修复补丁",
+			"description": "针对原版部分内容进行修复、优化、扩展；mod作者和玩家都需要安装",
+			"workshopId": "3782171338"
 		}
 	]
 }
