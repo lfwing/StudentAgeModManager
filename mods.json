@@ -1,6 +1,6 @@
 {
 	"schemaVersion": 1,
-	"updatedAt": "2026-08-15",
+	"updatedAt": "2026-08-20",
 	"mirrors": [
 		"https://ghproxy.net/",
 		"https://gh-proxy.com/",
@@ -26,6 +26,12 @@
 			"name": "学生时代官方编辑器Plus",
 			"description": "增强游戏自带 Mod 编辑器：剧情图可视化编辑、预览图片、搜索等十余项功能增强；只需Mod作者安装",
 			"workshopId": "3783602310"
+		},
+		{
+			"id": "white12666-studentage-latex",
+			"name": "对话支持 LaTeX 公式排版 Mod",
+			"description": "在对话中排版行内公式、矩阵、方程与分段函数",
+			"workshopId": "3786744379"
 		}
 	]
 }
